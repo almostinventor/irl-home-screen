@@ -1,0 +1,20 @@
+# WiFi credentials: copy secrets.example.h to secrets.h and never commit it
+firmware/irl_home_screen/secrets.h
+
+# Your own game artwork stays local
+app/logos/*
+!app/logos/README.md
+app/videos/
+
+# Build output and caches
+build/
+firmware/**/build/
+__pycache__/
+*.pyc
+
+# Editor / OS clutter
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini

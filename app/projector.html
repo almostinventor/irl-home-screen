@@ -1,0 +1,2365 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>IRL Home Screen - Projector Output</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #000; overflow: hidden; height: 100%; }
+  #stage { position: relative; width: 100vw; height: 100vh; background: #000; }
+
+  .slot {
+    position: absolute;
+    box-sizing: border-box;
+    overflow: hidden;
+    pointer-events: none;
+  }
+  /* Active slot: a white frame standing in for the case outline, a dim wash of the slot's
+     colour inside it, and a bright band of that colour sweeping down the long axis.
+     The sweep replaced a brightness pulse because motion reads far better on a projected
+     surface -- an opacity oscillation just washes out, a moving band still catches the eye. */
+  .slot.active {
+    border: 3px solid rgba(255,255,255,.95);
+    background: var(--slot-fill, rgba(255,246,220,.28));
+    box-shadow: 0 0 22px rgba(255,255,255,.4), inset 0 0 12px rgba(255,255,255,.25);
+  }
+  .slot.active::after {
+    content: "";
+    position: absolute;
+    left: 0; right: 0; top: 0; height: 55%;
+    background: linear-gradient(180deg,
+                transparent 0%, var(--slot-sweep, rgba(255,214,120,.95)) 50%, transparent 100%);
+    animation: slotSweep 1.5s linear infinite;
+  }
+  /* Travels from fully above the box to fully below it. The percentages are relative to the
+     band's own height (55% of the slot), which is why they overshoot 100%. */
+  @keyframes slotSweep {
+    from { transform: translateY(-110%); }
+    to   { transform: translateY(290%); }
+  }
+
+  /* The outro dance (D). A bright flare on its own class, so it can never be confused with
+     or cleared by the ordinary `active` highlight. The short
+     fade-out is what makes it read as lights dancing rather than a grid of switches: a slot
+     snaps on, then eases off as the pattern moves past it. */
+  .slot { transition: opacity .16s ease-out; }
+  .slot.dance {
+    border: 3px solid rgba(255,255,255,.95);
+    background: var(--slot-sweep, rgba(255,214,120,.95));
+    opacity: 1;
+    box-shadow: 0 0 26px rgba(255,255,255,.55);
+    transition: none;
+  }
+  body.dancing .slot:not(.dance) {
+    border: 2px solid rgba(255,255,255,.25);
+    background: var(--slot-fill, rgba(255,246,220,.28));
+    opacity: .28;
+  }
+
+  /* Classic mode (K): the look the shelf had before per-slot colours -- no white frame, no
+     colour, no sweep, just the warm gold wash breathing in and out. Same gradient and the
+     same pulseGlow the extra-highlight boxes never stopped using, so this is the original
+     treatment rather than an imitation of it.
+     */
+  body.classic .slot.active {
+    border: none;
+    background: linear-gradient(180deg, rgba(255,246,220,.92) 0%, rgba(255,214,120,.85) 100%);
+    box-shadow: 0 0 24px rgba(255,214,120,.55);
+    animation: pulseGlow 1.8s ease-in-out infinite;
+  }
+  body.classic .slot.active::after { content: none; }
+  body.classic .slot.dance {
+    border: none;
+    background: linear-gradient(180deg, rgba(255,246,220,.92) 0%, rgba(255,214,120,.85) 100%);
+    box-shadow: 0 0 30px rgba(255,214,120,.9);
+  }
+  body.classic.dancing .slot:not(.dance) {
+    border: none;
+    background: linear-gradient(180deg, rgba(255,246,220,.92) 0%, rgba(255,214,120,.85) 100%);
+    opacity: .2;
+  }
+
+  /* name tag: logo image > text, whichever is available, in that order */
+  #nameLabel {
+    position: absolute; display: none;
+    align-items: center; justify-content: center;
+    overflow: hidden; pointer-events: auto; z-index: 5; background: #000;
+  }
+  #nameLabelLogo {
+    width: 100%; height: 100%; object-fit: contain; display: none; pointer-events: none;
+  }
+  #nameLabelText {
+    white-space: nowrap; display: inline-block; pointer-events: none;
+    color: #fff; font-family: system-ui, sans-serif; font-weight: 700;
+    text-shadow: 0 2px 10px rgba(0,0,0,.9);
+  }
+
+  /* Info card: fills the name-tag box while a game is pushed out. Logo, three stat tiles, a
+     short description.
+     Every size is a multiple of --u, which JS sets to 1% of the box's HEIGHT. The box is a
+     hand-drawn rectangle on a projected surface (26 x 21 cm on the shelf as built), so nothing
+     here can be sized in px or vw -- the only thing that stays proportional to what lands on
+     the wall is the box itself. At 21 cm tall, 1u is 2.1 mm: stat values come out ~19 mm high,
+     the description ~13 mm, both readable from across a room. */
+  #gameCard {
+    display: none; width: 100%; height: 100%; box-sizing: border-box;
+    flex-direction: column; align-items: stretch;
+    padding: calc(var(--u, 4px) * 3) calc(var(--u, 4px) * 4);
+    gap: calc(var(--u, 4px) * 2.5);
+    color: #fff; font-family: system-ui, sans-serif; pointer-events: none;
+  }
+  #gameCardLogo {
+    flex: 0 0 calc(var(--u, 4px) * 33); min-height: 0; width: 100%; object-fit: contain;
+  }
+  #gameCardTitle {
+    flex: 0 0 calc(var(--u, 4px) * 33); display: none; align-items: center; justify-content: center;
+    text-align: center; font-weight: 800; line-height: 1.05; overflow: hidden;
+    font-size: calc(var(--u, 4px) * 10);
+  }
+  #gameCardStats {
+    flex: 0 0 auto; display: flex; gap: calc(var(--u, 4px) * 2);
+  }
+  #gameCardStats .stat {
+    flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    border-top: calc(var(--u, 4px) * .6) solid var(--card-accent, #fff);
+    padding-top: calc(var(--u, 4px) * 1.2);
+    min-width: 0;
+  }
+  #gameCardStats .stat b {
+    font-size: calc(var(--u, 4px) * 9); line-height: 1; font-weight: 800;
+    color: var(--card-accent, #fff); white-space: nowrap;
+  }
+  #gameCardStats .stat span {
+    font-size: calc(var(--u, 4px) * 3.4); line-height: 1.3; font-weight: 700;
+    letter-spacing: .08em; white-space: nowrap; opacity: .9;
+  }
+  #gameCardStats .stat span.stars { font-size: calc(var(--u, 4px) * 4.6); letter-spacing: .04em; opacity: 1; }
+  #gameCardDesc {
+    flex: 1 1 0; min-height: 0; overflow: hidden;
+    display: flex; align-items: center; justify-content: center; text-align: center;
+  }
+  #gameCardDescText { font-weight: 600; line-height: 1.22; }
+
+  /* minimalist search box, same footprint as the name tag */
+  #searchInput {
+    position: absolute; display: none; z-index: 6;
+    background: transparent; border: none; border-bottom: 2px solid rgba(255,255,255,.65);
+    color: #fff; font-family: system-ui, sans-serif; font-weight: 600;
+    text-align: center; outline: none; box-sizing: border-box;
+  }
+  #searchInput::placeholder { color: rgba(255,255,255,.4); }
+
+  /* Gentle brightness pulse used by classic mode and the extra highlight boxes. */
+  @keyframes pulseGlow {
+    0%, 100% { opacity: .55; }
+    50%      { opacity: 1; }
+  }
+
+  /* extra highlight boxes: behave like a normal slot (glow + tick sound only while hovered),
+     just with no name/logo and no servo/click behavior */
+  .extraHighlight {
+    position: absolute;
+    box-sizing: border-box;
+    overflow: hidden;
+    pointer-events: none;
+  }
+  .extraHighlight.active {
+    background: linear-gradient(180deg, rgba(255,246,220,.92) 0%, rgba(255,214,120,.85) 100%);
+    animation: pulseGlow 1.8s ease-in-out infinite;
+  }
+
+  #calibHint {
+    position: absolute; top: 10px; left: 10px; color: #0f0; font-family: monospace;
+    font-size: 13px; background: rgba(0,0,0,.9); padding: 8px 12px; border-radius: 6px;
+    line-height: 1.5; display: none; z-index: 10; pointer-events: none;
+  }
+
+  /* test-mode indicator: deliberately understated - just a single letter, no box/background */
+  #testModeIndicator {
+    position: absolute; top: 10px; left: 10px; color: #0f0; font-family: monospace;
+    font-size: 13px; opacity: .5; display: none; z-index: 10; pointer-events: none;
+  }
+  #calibHint.show { display: block; }
+  #calibHint .prompt { color: #ff0; font-weight: bold; }
+
+  /* Rail calibration panel. Sits under the hint banner and is the only calibration overlay
+     that accepts clicks - everything else in calibration mode is click-on-the-stage. */
+  /* `top` is set from JS to sit just under the hint banner - the banner's height depends on how
+     many lines its text wraps to, which depends on the projector's resolution. */
+  #railPanel {
+    position: absolute; top: 96px; left: 10px; z-index: 11; display: none;
+    background: rgba(0,0,0,.92); border-radius: 6px; padding: 10px 12px;
+    font-family: monospace; font-size: 13px; color: #0f0; pointer-events: auto;
+  }
+  #railPanel.show { display: block; }
+  #railPanel .railRow { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
+  #railPanel label { color: #7c7; min-width: 62px; }
+  #railPanel input { width: 88px; background: #111; color: #0f0; border: 1px solid #363;
+    border-radius: 4px; padding: 3px 5px; font-family: monospace; font-size: 13px; }
+  #railPanel button { background: #1d3a1d; color: #cfc; border: 1px solid #363;
+    border-radius: 4px; padding: 4px 9px; font-family: monospace; font-size: 12px; cursor: pointer; }
+  #railPanel button:hover { background: #2a552a; }
+  #railPanel button.railArm { min-width: 30px; }
+  #railPanel button.railArm.on { background: #2f6ea8; color: #fff; border-color: #4a9; }
+  #railPanel .railNote { color: #676; font-size: 11px; }
+
+  /* settings menu: the hotkeys, made visible */
+  #settingsMenu {
+    position: absolute; inset: 0; display: none;
+    align-items: center; justify-content: center;
+    background: rgba(0,0,0,.75); z-index: 20;
+  }
+  #settingsMenuCard {
+    background: #17171a; border: 1px solid #333; border-radius: 12px;
+    padding: 28px 32px; width: 420px; max-width: 90vw; max-height: 90vh; overflow-y: auto;
+    font-family: system-ui, sans-serif; color: #eee; box-sizing: border-box;
+  }
+  #settingsMenuCard h2 {
+    margin: 0 0 18px 0; font-size: 1.3rem; color: #fff;
+  }
+  .settingsSection { margin-bottom: 18px; }
+  .settingsSection h3 {
+    margin: 0 0 8px 0; font-size: .8rem; text-transform: uppercase; letter-spacing: .05em;
+    color: #888; font-weight: 600;
+  }
+  .settingsBtn {
+    display: block; width: 100%; box-sizing: border-box; text-align: left;
+    background: #232327; color: #eee; border: 1px solid #38383e; border-radius: 8px;
+    padding: 10px 14px; margin-bottom: 6px; font-size: .95rem; cursor: pointer;
+  }
+  .settingsBtn:hover { background: #2c2c31; }
+  .settingsBtn:disabled { opacity: .4; cursor: default; }
+  .settingsBtn:disabled:hover { background: #232327; }
+  #settingsCloseBtn {
+    width: 100%; box-sizing: border-box; margin-top: 4px; padding: 10px 14px;
+    background: #38383e; color: #fff; border: none; border-radius: 8px;
+    font-size: .95rem; cursor: pointer;
+  }
+
+  .guide {
+    position: absolute; background: #0f0; z-index: 9; pointer-events: none;
+  }
+  .guide.v { width: 2px; top: 0; bottom: 0; }
+  .guide.h { height: 2px; left: 0; right: 0; }
+</style>
+</head>
+<body>
+<div id="stage"></div>
+
+<div id="nameLabel">
+  <img id="nameLabelLogo" alt="">
+  <span id="nameLabelText"></span>
+  <div id="gameCard">
+    <img id="gameCardLogo" alt="">
+    <div id="gameCardTitle"></div>
+    <div id="gameCardStats">
+      <div class="stat"><b id="statStars"></b><span class="stars" id="statStarsRow"></span></div>
+      <div class="stat"><b id="statHours"></b><span>HOURS PLAYED</span></div>
+      <div class="stat"><b id="statPlayers"></b><span>MAX PLAYERS</span></div>
+    </div>
+    <div id="gameCardDesc"><span id="gameCardDescText"></span></div>
+  </div>
+</div>
+
+<input id="searchInput" type="text" autocomplete="off" spellcheck="false" placeholder="type to search…" />
+
+<div id="testModeIndicator">T</div>
+
+<div id="settingsMenu">
+  <div id="settingsMenuCard">
+    <h2>Settings (M to close)</h2>
+
+    <div class="settingsSection">
+      <h3>Calibration</h3>
+      <button class="settingsBtn" data-calib="highlight">Highlight Boxes (C)</button>
+      <button class="settingsBtn" data-calib="label">Name Tag Box (B)</button>
+      <button class="settingsBtn" data-calib="extra">Extra Decoration Boxes (E)</button>
+    </div>
+
+    <div class="settingsSection">
+      <h3>Toggles</h3>
+      <button class="settingsBtn" id="settingsClassicToggle" title="Classic: plain golden glowing highlights, no white borders or per-game colours"></button>
+      <button class="settingsBtn" id="settingsTestModeToggle"></button>
+    </div>
+
+    <div class="settingsSection">
+      <h3>Actions</h3>
+      <button class="settingsBtn" id="settingsDance" title="All the games light up in a looping sequence of patterns. Press D (or this) again to stop.">Outro Dance on/off (D)</button>
+      <button class="settingsBtn" id="settingsReset" title="Puts any pushed-out game back and clears every highlight. Same as the Esc key.">Reset Shelf (Esc)</button>
+      <button class="settingsBtn" id="settingsHomeRail" title="Runs the rail's homing sequence: the carriage drives to the endstop and sets zero there">Home Rail</button>
+      <button class="settingsBtn" id="settingsPushRail" title="Fires the pusher wherever the carriage currently is (also L1 on the controller)">Push Now</button>
+    </div>
+
+    <button id="settingsCloseBtn">Close</button>
+  </div>
+</div>
+
+<div id="calibHint">
+  <span id="calibModeLabel">CALIBRATING HIGHLIGHT BOX</span> <span id="calibExitHint">(press C, B, E, or R to exit)</span><span id="calibSlotLine"> - slot <span id="calibSlot">1</span>/<span id="calibSlotTotal">17</span></span><br>
+  <span class="prompt" id="calibPrompt">Click the LEFT edge</span><br>
+  <span id="calibNavHint">[ / ] : jump to previous / next slot &nbsp; T: redo shared top/bottom &nbsp; </span>Backspace: undo last click<br>
+  Saved automatically as you go
+</div>
+
+<!-- Rail calibration controls. Unlike the box calibrations, this one has values you type rather
+     than points you click, so it needs real inputs - the keyboard shortcuts stay for the
+     jog-and-save loop you run with your hands on the shelf. -->
+<div id="railPanel">
+  <div class="railRow">
+    <label>Jog step</label>
+    <input type="number" id="railJogStep" min="1" max="5000" step="1">
+    <span class="railNote">arrow keys &nbsp;/&nbsp; Shift = &times;10</span>
+  </div>
+  <div class="railRow">
+    <label>Speed</label>
+    <input type="number" id="railSpeed" min="10" max="20000" step="100">
+    <label>Accel</label>
+    <input type="number" id="railAccel" min="10" max="100000" step="500">
+    <span class="railNote">steps/sec, steps/sec²</span>
+  </div>
+  <div class="railRow">
+    <label>Position</label>
+    <input type="number" id="railStepValue" min="0" step="1">
+    <button id="railSetSteps">SET</button>
+    <button id="railSaveHere">SAVE HERE</button>
+    <button id="railClearSlot">CLEAR</button>
+  </div>
+  <div class="railRow">
+    <label>Pusher</label>
+    <button class="railArm" id="railArmA">A</button>
+    <button class="railArm" id="railArmB">B</button>
+    <button id="railTestPush">TEST PUSH</button>
+    <span class="railNote">changing the arm clears this slot's position</span>
+  </div>
+</div>
+
+<script>
+const NUM_SLOTS = 17;
+
+// ---- EXAMPLE SHELF - replace with your own collection.
+//
+//      The shelf positions, in physical left-to-right order. Must match SLOT_NAMES (and
+//      NUM_SLOTS, slotIsEjectable) in firmware/irl_home_screen/irl_home_screen.ino 1:1.
+//
+//      `asset` is the logo file number and is deliberately NOT the slot index. The cases
+//      get physically rearranged on the shelf; the artwork doesn't follow them. Keeping the
+//      asset id ON the game means a reorder is just moving lines in this table. Logo files
+//      are NOT included in this repository: put your own in app/logos/NN.png (any game with
+//      no logo file simply shows its title as text).
+//
+//      `kind`: "game" = a real disc. "lever" = the Randomizer: Roulette case, which is the
+//      physical randomiser handle rather than a game. "empty" = the clear cases at the end.
+//      Only "game" slots can be pushed out, searched or landed on by a spin. ----
+//
+//      `desc`, `hours`, `stars` and `players` feed the info card shown while a case is pushed
+//      out. They live ON the game for the same reason `asset` does: a reorder must carry them
+//      along. The `hours` and `stars` below are made-up example values. `players` is the most that can
+//      play at once. Keep `desc` to roughly 90 characters: the card shrinks text to fit, so a
+//      long one does not overflow, it just gets small.
+const SLOTS = [
+  { kind: "lever", title: "Randomizer: Roulette",                        asset: null },
+  { kind: "game",  title: "Donkey Kong Country Returns",                 asset: 14,
+    hours: 42, stars: 5, players: 2,
+    desc: "Tiki thieves stole the banana hoard. Roll, cling and barrel-blast across the island to get it back." },
+  { kind: "game",  title: "Disney Epic Mickey",                          asset: 13,
+    hours: 18, stars: 4, players: 1,
+    desc: "Mickey falls into a wasteland of forgotten cartoons, armed with a brush of paint and thinner." },
+  { kind: "game",  title: "The Legend of Spyro: Dawn of the Dragon",     asset: 1,
+    hours: 11, stars: 3, players: 2,
+    desc: "Spyro and Cynder, chained together, take to the sky to stop the Dark Master for good." },
+  { kind: "game",  title: "LEGO Star Wars: The Complete Saga",           asset: 10,
+    hours: 67, stars: 5, players: 2,
+    desc: "All six episodes, brick by brick. Smash everything, collect every stud, swap heroes on the fly." },
+  { kind: "game",  title: "LEGO Pirates of the Caribbean: The Video Game", asset: 7,
+    hours: 23, stars: 4, players: 2,
+    desc: "Four films of swashbuckling in LEGO form. Captain Jack's compass always knows where the loot is." },
+  { kind: "game",  title: "Guitar Hero: Greatest Hits",                  asset: 9,
+    hours: 31, stars: 4, players: 4,
+    desc: "The best tracks from the early Guitar Hero games, rebuilt for a full band." },
+  { kind: "game",  title: "EA Playground",                               asset: 8,
+    hours: 6, stars: 3, players: 4,
+    desc: "Dodgeball, tetherball and slot cars. Recess rules apply: winner keeps the stickers." },
+  { kind: "game",  title: "LEGO Indiana Jones 2: The Adventure Continues", asset: 6,
+    hours: 14, stars: 3, players: 2,
+    desc: "Whip, punch and build through all four films, then make your own levels." },
+  { kind: "game",  title: "Guitar Hero 5",                               asset: 5,
+    hours: 38, stars: 4, players: 4,
+    desc: "85 songs and any mix of instruments. Jump in or drop out mid-song without stopping the show." },
+  { kind: "game",  title: "LEGO Batman 2: DC Super Heroes",              asset: 3,
+    hours: 27, stars: 4, players: 2,
+    desc: "Joker and Lex Luthor team up, so Batman calls the Justice League. Gotham is yours to roam." },
+  { kind: "game",  title: "Example Game",                                asset: 4,
+    hours: 12, stars: 4, players: 1,
+    desc: "Replace this entry with a game from your own shelf. Edit SLOTS in projector.html." },
+  { kind: "game",  title: "LEGO Star Wars III: The Clone Wars",          asset: 12,
+    hours: 20, stars: 4, players: 2,
+    desc: "Command clone armies in huge ground battles and trade lightsaber blows with the Separatists." },
+  { kind: "game",  title: "Cocoto Surprise",                             asset: 2,
+    hours: 2, stars: 2, players: 4,
+    desc: "A little red imp and a pile of quick-fire party minigames. Chaotic, loud, over in minutes." },
+  { kind: "game",  title: "World of Zoo",                                asset: 11,
+    hours: 9, stars: 3, players: 4,
+    desc: "Feed, wash and befriend the animals up close. The pandas are needier than they look." },
+  { kind: "empty", title: "",                                            asset: null },
+  { kind: "empty", title: "",                                            asset: null }
+];
+
+const TITLES = SLOTS.map(s => s.title);
+
+// A slot only ejects if there's actually a disc case in front of the pusher - the randomiser
+// lever and the two clear cases at the end have nothing to push out.
+function slotIsEjectable(index) { return SLOTS[index] && SLOTS[index].kind === "game"; }
+
+function assetName(index) {
+  const a = SLOTS[index] && SLOTS[index].asset;
+  return a === null || a === undefined ? null : String(a).padStart(2, "0");
+}
+function logoSrcFor(index)  { const a = assetName(index); return a ? "logos/"  + a + ".png" : ""; }
+
+// ---- Per-slot highlight colour. Hues are spread around the wheel by the golden angle, which
+//      gives distinct, random-looking colours where neighbours never collide. Fixed (not
+//      Math.random) so a slot keeps its colour across reloads.
+//
+//      Generated in OKLCH at a FIXED lightness, not in HSL. A projector only ADDS light, so
+//      every slot has to land in the same brightness band or half the shelf glares while the
+//      other half reads as a dim smudge. HSL lightness is not perceived brightness: the old
+//      hsla(hue, 90%, 62%) held L nominally constant but ranged over 6.24x in actual luminance
+//      (yellow 0.795, blue 0.127). Holding OKLCH's L constant brings that spread to 1.14x.
+//
+//      Hues that fall outside sRGB at this lightness lose CHROMA, never lightness - clamping
+//      the RGB channels instead would shift both hue and luminance, and luminance is the one
+//      thing this exists to hold still. The cost is that saturation varies by hue (blues come
+//      out more pastel than greens); for a projected highlight that is the right trade.
+//
+//      Converted to rgba() here rather than emitted as CSS oklch() deliberately: if the
+//      WebView2 runtime were ever too old for oklch(), the custom property would be invalid and
+//      every slot would silently fall back to the same cream default in var()'s fallback - one
+//      uniform colour across the whole shelf, with nothing in the console to say why. ----
+const SLOT_OKLCH_L = 0.82; // perceptual lightness, identical for every slot
+const SLOT_OKLCH_C = 0.15; // chroma ceiling; reduced per hue where sRGB can't hold it
+
+function oklchToLinearRgb(L, C, H) {
+  const h = H * Math.PI / 180;
+  const a = C * Math.cos(h), b = C * Math.sin(h);
+  const l = Math.pow(L + 0.3963377774 * a + 0.2158037573 * b, 3);
+  const m = Math.pow(L - 0.1055613458 * a - 0.0638541728 * b, 3);
+  const s = Math.pow(L - 0.0894841775 * a - 1.2914855480 * b, 3);
+  return [
+     4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+    -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+    -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s
+  ];
+}
+
+function inSrgbGamut(rgb) {
+  return rgb.every(v => v >= -1e-4 && v <= 1 + 1e-4);
+}
+
+function slotColor(index, alpha) {
+  const hue = (index * 137.508) % 360;
+
+  let c = SLOT_OKLCH_C;
+  if (!inSrgbGamut(oklchToLinearRgb(SLOT_OKLCH_L, c, hue))) {
+    // Binary search the largest chroma this hue can hold at this lightness.
+    let lo = 0, hi = c;
+    for (let i = 0; i < 24; i++) {
+      const mid = (lo + hi) / 2;
+      if (inSrgbGamut(oklchToLinearRgb(SLOT_OKLCH_L, mid, hue))) lo = mid; else hi = mid;
+    }
+    c = lo;
+  }
+
+  const rgb = oklchToLinearRgb(SLOT_OKLCH_L, c, hue).map(v => {
+    v = Math.min(1, Math.max(0, v));
+    const encoded = v <= 0.0031308 ? 12.92 * v : 1.055 * Math.pow(v, 1 / 2.4) - 0.055;
+    return Math.round(encoded * 255);
+  });
+  return "rgba(" + rgb[0] + "," + rgb[1] + "," + rgb[2] + "," + alpha + ")";
+}
+
+// ---- Default layout: even spread across the screen - replace via calibration ----
+function defaultRects() {
+  const rects = [];
+  const totalW = window.innerWidth * 0.9;
+  const startX = window.innerWidth * 0.05;
+  const slotW = totalW / NUM_SLOTS;
+  for (let i = 0; i < NUM_SLOTS; i++) {
+    rects.push({
+      x: Math.round(startX + i * slotW),
+      y: Math.round(window.innerHeight * 0.35),
+      w: Math.round(slotW * 0.8),
+      h: Math.round(window.innerHeight * 0.4)
+    });
+  }
+  return rects;
+}
+
+let rects = JSON.parse(localStorage.getItem("shelf_rects") || "null") || defaultRects();
+
+// The saved rects predate the current SLOTS table whenever a case is added to or removed from
+// the shelf, and layout() indexes slotEls by rect, so a stale longer array threw on startup.
+// Reconcile the length against NUM_SLOTS: extras are dropped, missing ones fall back to the
+// default spread. The boxes still need recalibrating (C) after any reorder - this only keeps
+// the app running until someone does.
+if (rects.length !== NUM_SLOTS) {
+  const defaults = defaultRects();
+  rects = defaults.map((d, i) => rects[i] || d);
+  saveRects();
+}
+let labelRect = JSON.parse(localStorage.getItem("shelf_label_rect") || "null");
+
+if (!labelRect) {
+  const oldLabelRects = JSON.parse(localStorage.getItem("shelf_label_rects") || "null");
+  if (oldLabelRects && oldLabelRects[0]) {
+    labelRect = oldLabelRects[0];
+    localStorage.setItem("shelf_label_rect", JSON.stringify(labelRect));
+  }
+}
+
+function saveRects() { localStorage.setItem("shelf_rects", JSON.stringify(rects)); }
+function saveLabelRect() { localStorage.setItem("shelf_label_rect", JSON.stringify(labelRect)); }
+
+const stage = document.getElementById("stage");
+let slotEls = [];
+
+function buildDOM() {
+  stage.querySelectorAll(".slot").forEach(el => el.remove());
+  slotEls = [];
+  for (let i = 0; i < NUM_SLOTS; i++) {
+    const s = document.createElement("div");
+    s.className = "slot";
+    // Colour is fixed per slot, so bake it in once here rather than on every setActive --
+    // the spin repaints highlights dozens of times and shouldn't be writing styles each tick.
+    s.style.setProperty("--slot-fill", slotColor(i, 0.30));
+    s.style.setProperty("--slot-sweep", slotColor(i, 0.95));
+    stage.appendChild(s);
+    slotEls.push(s);
+  }
+  layout();
+}
+
+function layout() {
+  rects.forEach((r, i) => {
+    const s = slotEls[i];
+    s.style.left = r.x + "px";
+    s.style.top = r.y + "px";
+    s.style.width = r.w + "px";
+    s.style.height = r.h + "px";
+  });
+}
+
+// accepts a single index or an array of indices (for multi-match search highlighting)
+function setActive(indices) {
+  const set = new Set(Array.isArray(indices) ? indices : [indices]);
+  slotEls.forEach((s, i) => s.classList.toggle("active", set.has(i)));
+}
+
+buildDOM();
+
+// ---- classic mode: K (or the settings menu). The pre-colour look -- every highlight is the
+//      same warm gold glow, no white frame, no sweep. Purely a stylesheet switch (body.classic),
+//      so nothing about selection, the dance or the spin behaves any differently.
+//      Remembered across restarts: it is a taste setting, not a transient state. ----
+let classicMode = localStorage.getItem("shelf_classic") === "1";
+const CLASSIC_GOLD = "rgba(255,214,120,1)";
+
+function applyClassicMode() { document.body.classList.toggle("classic", classicMode); }
+
+function toggleClassicMode() {
+  classicMode = !classicMode;
+  localStorage.setItem("shelf_classic", classicMode ? "1" : "0");
+  applyClassicMode();
+}
+
+applyClassicMode();
+
+// ---- extra highlight boxes: arbitrary, unlimited, no name/game attached - purely decorative
+//      markers (calibrated via E) that never affect hover/click/spin/servo logic at all. ----
+let extraBoxes = JSON.parse(localStorage.getItem("shelf_extra_boxes") || "[]");
+let extraBoxEls = [];
+
+function saveExtraBoxes() { localStorage.setItem("shelf_extra_boxes", JSON.stringify(extraBoxes)); }
+
+function renderExtraBoxes() {
+  extraBoxEls.forEach(el => el.remove());
+  extraBoxEls = [];
+  extraBoxes.forEach(r => {
+    const el = document.createElement("div");
+    el.className = "extraHighlight";
+    el.style.left = r.x + "px";
+    el.style.top = r.y + "px";
+    el.style.width = r.w + "px";
+    el.style.height = r.h + "px";
+    stage.appendChild(el);
+    extraBoxEls.push(el);
+  });
+}
+
+renderExtraBoxes();
+
+// ---- name tag: logo image > text, first one that's available ----
+const nameLabelEl = document.getElementById("nameLabel");
+const nameLabelLogoEl = document.getElementById("nameLabelLogo");
+const nameLabelTextEl = document.getElementById("nameLabelText");
+
+function fitTextInElement(el, text, boxW, boxH) {
+  const baseline = 100;
+  el.style.fontSize = baseline + "px";
+  el.textContent = text;
+  const naturalW = el.offsetWidth || 1;
+  const naturalH = el.offsetHeight || baseline;
+  const scale = Math.min(boxW / naturalW, boxH / naturalH);
+  el.style.fontSize = (baseline * scale) + "px";
+}
+
+function fitLabelText(text, boxW, boxH) { fitTextInElement(nameLabelTextEl, text, boxW, boxH); }
+
+function positionNameLabel() {
+  if (!labelRect) { nameLabelEl.style.display = "none"; return false; }
+  nameLabelEl.style.left = labelRect.x + "px";
+  nameLabelEl.style.top = labelRect.y + "px";
+  nameLabelEl.style.width = labelRect.w + "px";
+  nameLabelEl.style.height = labelRect.h + "px";
+  nameLabelEl.style.display = "flex";
+  return true;
+}
+
+// ---- info card: what the name-tag box shows while a case is pushed out ----
+const gameCardEl = document.getElementById("gameCard");
+const gameCardLogoEl = document.getElementById("gameCardLogo");
+const gameCardTitleEl = document.getElementById("gameCardTitle");
+const gameCardDescEl = document.getElementById("gameCardDesc");
+const gameCardDescTextEl = document.getElementById("gameCardDescText");
+
+// Largest description size, in units of --u (1% of the box height), and the floor below which
+// shrinking stops and the text is simply clipped -- past that it is unreadable projected anyway.
+const CARD_DESC_MAX_U = 6.6;
+const CARD_DESC_MIN_U = 3.2;
+
+function hideGameCard() { gameCardEl.style.display = "none"; }
+
+function showGameCard(index) {
+  if (!positionNameLabel()) return; // no name-tag box calibrated - nowhere to put it
+  const g = SLOTS[index];
+  const u = labelRect.h / 100;
+  nameLabelLogoEl.style.display = "none";
+  nameLabelTextEl.style.display = "none";
+  nameLabelEl.style.setProperty("--u", u + "px");
+  // Accent follows the slot's own highlight colour, so the card visibly belongs to the case
+  // that is lit. Classic mode has no per-slot colours, so it gets the one gold.
+  nameLabelEl.style.setProperty("--card-accent", classicMode ? CLASSIC_GOLD : slotColor(index, 1));
+
+  gameCardTitleEl.textContent = g.title;
+  gameCardTitleEl.style.display = "none";
+  gameCardLogoEl.style.display = "block";
+  gameCardLogoEl.onerror = () => {
+    gameCardLogoEl.style.display = "none";
+    gameCardTitleEl.style.display = "flex";
+  };
+  gameCardLogoEl.src = logoSrcFor(index);
+
+  const stars = Math.max(0, Math.min(5, Math.round(g.stars || 0)));
+  document.getElementById("statStars").textContent = stars + "/5";
+  document.getElementById("statStarsRow").textContent = "★".repeat(stars) + "☆".repeat(5 - stars);
+  document.getElementById("statHours").textContent = (g.hours || 0) + " h";
+  document.getElementById("statPlayers").textContent = g.players || 1;
+  gameCardDescTextEl.textContent = g.desc || "";
+
+  gameCardEl.style.display = "flex";
+
+  // Shrink the description until it fits whatever height the fixed rows left over. Has to run
+  // after display:flex, or every measurement below reads 0.
+  let size = CARD_DESC_MAX_U;
+  gameCardDescTextEl.style.fontSize = (size * u) + "px";
+  while (size > CARD_DESC_MIN_U && gameCardDescTextEl.offsetHeight > gameCardDescEl.clientHeight) {
+    size -= 0.2;
+    gameCardDescTextEl.style.fontSize = (size * u) + "px";
+  }
+}
+
+function showTextFallback(index) {
+  hideGameCard();
+  nameLabelLogoEl.style.display = "none";
+  nameLabelTextEl.style.display = "inline-block";
+  fitLabelText(TITLES[index] || ("Game " + (index + 1)), labelRect.w, labelRect.h);
+}
+
+function showLogoFallback(index) {
+  hideGameCard();
+  nameLabelTextEl.style.display = "none";
+  nameLabelLogoEl.onerror = () => showTextFallback(index);
+  nameLabelLogoEl.src = logoSrcFor(index);
+  nameLabelLogoEl.style.display = "block";
+}
+
+// The name tag is logo -> text. It used to try a Disc Channel banner video first; that path is
+// gone by choice, so a slot with no logo file falls straight through to its title as text.
+function showLabel(index) {
+  if (!positionNameLabel()) return;
+  showLogoFallback(index);
+}
+
+function hideLabel() {
+  hideGameCard();
+  nameLabelLogoEl.style.display = "none";
+  nameLabelTextEl.style.display = "none";
+  positionNameLabel(); // keeps the (now empty) box present and clickable if labelRect is calibrated
+}
+
+function fullyHideLabel() {
+  // used during highlight-box calibration so the name box can't intercept edge-picking clicks
+  nameLabelEl.style.display = "none";
+}
+
+// ---- search: click the name tag to open a minimalist search box, type to highlight matches ----
+const searchInputEl = document.getElementById("searchInput");
+let searchMode = false;
+
+function matchGames(query) {
+  const q = query.trim().toLowerCase();
+  if (!q) return [];
+  const matches = [];
+  TITLES.forEach((title, i) => {
+    const words = title.toLowerCase().replace(/[:,.']/g, "").split(/\s+/);
+    if (words.some(w => w.startsWith(q))) matches.push(i);
+  });
+  return matches;
+}
+
+function openSearch() {
+  if (calibMode || !labelRect) return;
+  searchMode = true;
+  hideLabel();
+  searchInputEl.style.left = labelRect.x + "px";
+  searchInputEl.style.top = labelRect.y + "px";
+  searchInputEl.style.width = labelRect.w + "px";
+  searchInputEl.style.height = labelRect.h + "px";
+  searchInputEl.style.fontSize = Math.min(labelRect.h * 0.55, 46) + "px";
+  searchInputEl.value = "";
+  searchInputEl.style.display = "block";
+  searchInputEl.focus();
+  setActive([]);
+}
+
+function closeSearch() {
+  searchMode = false;
+  searchInputEl.style.display = "none";
+  searchInputEl.blur();
+  setActive(-1);
+  hoveredIndex = -2; // force mousemove to re-evaluate fresh on next move
+}
+
+nameLabelEl.addEventListener("click", () => { if (!calibMode && !searchMode && !spinning && !settingsMenuOpen && !gameIsOut()) openSearch(); });
+searchInputEl.addEventListener("input", () => setActive(matchGames(searchInputEl.value)));
+searchInputEl.addEventListener("blur", closeSearch);
+searchInputEl.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") { closeSearch(); e.stopPropagation(); return; }
+  if (e.key === "Enter") {
+    const matches = matchGames(searchInputEl.value);
+    if (matches.length === 1) {
+      const idx = matches[0];
+      closeSearch();
+      selectSlot(idx); // same path as a normal click: push it out
+    }
+    e.stopPropagation();
+    return;
+  }
+  e.stopPropagation(); // don't let typing trigger the c/b/f calibration shortcuts
+});
+
+// ---- hover click/scroll sound: a short synthesized tick, no audio file needed ----
+let audioCtx = null;
+function unlockAudio() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (audioCtx.state === "suspended") audioCtx.resume();
+}
+document.addEventListener("pointerdown", unlockAudio, { once: true });
+document.addEventListener("keydown", unlockAudio, { once: true });
+
+function playScrollTick() {
+  if (!audioCtx) return;
+  const t = audioCtx.currentTime;
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = "square";
+  osc.frequency.setValueAtTime(1400, t);
+  osc.frequency.exponentialRampToValueAtTime(500, t + 0.035);
+  gain.gain.setValueAtTime(0.18, t);
+  gain.gain.exponentialRampToValueAtTime(0.001, t + 0.05);
+  osc.connect(gain).connect(audioCtx.destination);
+  osc.start(t);
+  osc.stop(t + 0.06);
+}
+
+// Push and pull. A matched pair: the same two notes, up when a case comes out and back down
+// when it goes in, so the second one sounds like the answer to the first. A fifth apart
+// (C5 / G5) - wide enough to hear the direction at a glance, plain enough not to compete with
+// the reveal tune or the opening chime.
+//
+// Bell-ish: a triangle with a quieter partial two octaves up, and a long soft tail. These play
+// one at a time with seconds between them, so unlike the reveal notes they can afford to ring.
+const CASE_NOTE_LOW = 523.25;   // C5
+const CASE_NOTE_HIGH = 783.99;  // G5
+
+function playCaseNotes(freqs, peak) {
+  if (!audioCtx) return;
+  const t0 = audioCtx.currentTime;
+  freqs.forEach((freq, i) => {
+    const t = t0 + i * 0.11;
+    const last = i === freqs.length - 1;
+    [[1, peak, "triangle"], [4, peak * 0.18, "sine"]].forEach(([mult, level, type]) => {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = type;
+      osc.frequency.setValueAtTime(freq * mult, t);
+      const dur = last ? 0.55 : 0.16;
+      gain.gain.setValueAtTime(0.0001, t);
+      gain.gain.exponentialRampToValueAtTime(level, t + 0.012);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      osc.connect(gain).connect(audioCtx.destination);
+      osc.start(t);
+      osc.stop(t + dur + 0.02);
+    });
+  });
+}
+
+function playPushChime() { playCaseNotes([CASE_NOTE_LOW, CASE_NOTE_HIGH], 0.16); }
+// The way back is a little quieter: it is the end of something, not an announcement.
+function playPullChime() { playCaseNotes([CASE_NOTE_HIGH, CASE_NOTE_LOW], 0.12); }
+
+// ---- cursor-follow highlighting: whichever calibrated box the mouse is inside lights up ----
+let hoveredIndex = -1;
+let hoveredExtraIndex = -1; // separate from hoveredIndex - extra boxes never touch game state
+
+function slotAtPoint(x, y) {
+  for (let i = 0; i < rects.length; i++) {
+    const r = rects[i];
+    if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) return i;
+  }
+  return -1;
+}
+
+function extraBoxAtPoint(x, y) {
+  for (let i = 0; i < extraBoxes.length; i++) {
+    const r = extraBoxes[i];
+    if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) return i;
+  }
+  return -1;
+}
+
+function setExtraActive(index) {
+  extraBoxEls.forEach((el, i) => el.classList.toggle("active", i === index));
+}
+
+// ---- pad mode: who owns the highlight, the D-pad or the pointer -----------------------------
+// A remote through Touchmote is BOTH at once: the D-pad sends arrow keys, while the IR pointer
+// drives the mouse cursor and never holds perfectly still. Two things went wrong with that:
+//
+//   - The highlight flickered. A D-pad press lit a game, and the very next mousemove - pointer
+//     jitter, a few pixels - re-evaluated what the CURSOR was over and replaced or cleared it.
+//     The carriage still travelled (that request had already gone), so the motor moved and the
+//     light did not stay.
+//   - A selected the wrong thing. A is bound to left-click, and a click acts where the cursor
+//     is, not where the D-pad highlight is - so A fired whatever the idle cursor happened to be
+//     sitting on (the Randomizer, at the left end) instead of the highlighted game.
+//
+// So a D-pad press takes ownership: from then on mousemoves are ignored and a click means
+// "select the highlighted game". Moving the pointer deliberately - further than jitter, from
+// where it was when the D-pad was pressed - hands ownership back to the cursor.
+const PAD_MODE_RELEASE_PX = 60;
+let padMode = false;
+let padAnchorX = 0, padAnchorY = 0;
+let lastMouseX = 0, lastMouseY = 0;
+
+function enterPadMode() {
+  padMode = true;
+  padAnchorX = lastMouseX;
+  padAnchorY = lastMouseY;
+}
+
+// A is also bound to Space as well as left-click, so one press arrives as TWO inputs a few
+// milliseconds apart. Unhandled, the click pushed a case out and the Space - "any input puts it
+// back" - retracted it in the same instant. Every select/retract input goes through here, and a
+// second one inside the window is treated as the other half of the same button press.
+const SELECT_INPUT_DEBOUNCE_MS = 350;
+let lastSelectInputAt = -Infinity;
+
+function acceptSelectInput() {
+  const now = performance.now();
+  if (now - lastSelectInputAt < SELECT_INPUT_DEBOUNCE_MS) return false;
+  lastSelectInputAt = now;
+  return true;
+}
+
+document.addEventListener("mousemove", (e) => {
+  lastMouseX = e.clientX;
+  lastMouseY = e.clientY;
+  if (padMode) {
+    if (Math.hypot(e.clientX - padAnchorX, e.clientY - padAnchorY) < PAD_MODE_RELEASE_PX) return;
+    padMode = false; // a real pointer move - the cursor owns the highlight again
+  }
+  if (calibMode || searchMode || spinning || settingsMenuOpen) return;
+  if (dancing) return;     // the outro owns every light on the shelf
+  if (gameIsOut()) return; // a case is out - its highlight is pinned until it is back in
+  const idx = slotAtPoint(e.clientX, e.clientY);
+  const extraIdx = idx === -1 ? extraBoxAtPoint(e.clientX, e.clientY) : -1;
+  if (idx === hoveredIndex && extraIdx === hoveredExtraIndex) return;
+
+  hoveredIndex = idx;
+  hoveredExtraIndex = extraIdx;
+  setExtraActive(extraIdx);
+
+  if (idx === -1) {
+    setActive(-1);
+    hideLabel();
+  } else {
+    setActive(idx);
+    showLabel(idx);
+  }
+
+  if (idx !== -1 || extraIdx !== -1) playScrollTick();
+});
+
+// ---- rail delivery: one carriage on a rail (firmware/irl_home_screen) drives to whichever of
+//      the 17 slots is selected and ejects it with one of two pusher servos - A serves the left
+//      half of the shelf, B the right half, split at the firmware's own splitSlot. The app never
+//      picks a pusher: it names a slot and the board knows which arm reaches it. ----
+// The board's static IP - must match STATIC_IP in firmware/irl_home_screen/irl_home_screen.ino.
+const ESP32_URL = "http://192.168.1.50";
+
+// Cached board state. `railSlots` is the per-slot calibration table (/api/slots) - the app needs
+// it to know which slots the carriage can actually reach, since an untaught slot has no position
+// and the firmware will refuse it. Null means "haven't heard from the rail", which is treated as
+// optimistic everywhere: an offline rail must never stop the projector UI from working.
+let railStatus = null;
+let railSlots = null;
+
+function railSlotTaught(idx) {
+  if (!railSlots) return true; // no table yet - assume reachable and let the board say otherwise
+  return !!(railSlots[idx] && railSlots[idx].set);
+}
+
+function loadRailSlots() {
+  return fetch(ESP32_URL + "/api/slots")
+    .then(r => r.json())
+    .then(list => { railSlots = list; if (calibMode === "rail") refreshCalibUI(); })
+    .catch(() => { railSlots = null; });
+}
+
+// Drive to the slot and eject it. One call - the firmware sequences travel, settle and push,
+// and answers immediately rather than holding the socket for the whole several-second cycle.
+// `hold` leaves the case out until /api/retract instead of pulling the arm back after a second.
+function deliverGame(idx, hold) {
+  if (!slotIsEjectable(idx)) return; // lever and the clear cases have nothing to push out
+  fetch(ESP32_URL + "/api/select?game=" + idx + (hold ? "&hold=1" : ""))
+    .then(r => r.ok ? null : r.text().then(t => console.warn("Rail refused slot " + idx + ": " + t)))
+    .catch(err => console.warn("Rail select request failed:", err));
+}
+
+function homeRail() {
+  fetch(ESP32_URL + "/api/home")
+    .then(r => console.log("Rail home:", r.status))
+    .catch(err => console.warn("Rail home request failed:", err));
+}
+
+// Move the carriage to a slot WITHOUT ejecting - used so the rail physically tracks the
+// highlighted game as you navigate with the controller.
+//
+// Throttled deliberately: scrolling fast used to fire one goto per step, and every one of
+// those is a fresh motor inrush. Coalescing them into a single move to wherever you actually
+// landed is both smoother and much easier on the 5V rail. First press moves immediately so
+// it still feels responsive; the rest of a fast scroll collapses into one trailing move.
+const RAIL_GOTO_MIN_INTERVAL_MS = 300;
+let lastRailGotoTime = 0;
+let pendingRailGotoIdx = -1;
+let pendingRailGotoTimer = null;
+
+function sendRailGoto(idx) {
+  lastRailGotoTime = performance.now();
+  if (!railSlotTaught(idx)) return; // nothing taught here - the board would just refuse it
+  fetch(ESP32_URL + "/api/goto?game=" + idx)
+    .catch(() => {}); // navigation shouldn't spam warnings if the rail is offline
+}
+
+function railGoto(idx) {
+  const now = performance.now();
+  const sinceLast = now - lastRailGotoTime;
+
+  if (sinceLast >= RAIL_GOTO_MIN_INTERVAL_MS && pendingRailGotoTimer === null) {
+    sendRailGoto(idx);
+    return;
+  }
+
+  pendingRailGotoIdx = idx;
+  if (pendingRailGotoTimer !== null) return; // a trailing send is already scheduled
+  pendingRailGotoTimer = setTimeout(() => {
+    pendingRailGotoTimer = null;
+    if (pendingRailGotoIdx !== -1) {
+      sendRailGoto(pendingRailGotoIdx);
+      pendingRailGotoIdx = -1;
+    }
+  }, RAIL_GOTO_MIN_INTERVAL_MS - sinceLast);
+}
+
+// Fire the pusher wherever the carriage currently is (L1) - the board picks A or B from
+// whichever taught slot it is closest to.
+function railPush() {
+  fetch(ESP32_URL + "/api/testpush")
+    .then(r => console.log("Rail push:", r.status))
+    .catch(err => console.warn("Rail push request failed:", err));
+}
+
+// ---- board status ------------------------------------------------------------------------
+// One poll of /api/status, shared by everything that needs to know what the board is doing:
+// putting a pushed-out case back, the reset, and the one-off rail home after startup. Slow
+// while nothing is happening, fast while something is waiting on the board.
+const STATUS_POLL_IDLE_MS = 1000;
+const STATUS_POLL_FAST_MS = 150;
+// Abandon a request that has not answered in this long and ask again. Only one is allowed in
+// flight, so one stuck request (a lost TCP SYN is retransmitted after a full second) would
+// otherwise hold up every update behind it.
+const STATUS_POLL_TIMEOUT_MS = 2000;
+// If the board stops answering, stop waiting on it - see boardLinkLive.
+const BOARD_LINK_TIMEOUT_MS = 5000;
+
+let statusLastGoodAt = 0;
+let statusPollInFlight = false;
+let statusLastPollAt = 0;
+
+// An unreachable board must never lock the shelf: anything that waits on the board checks
+// this first and gives up waiting when it is false.
+function boardLinkLive() {
+  return statusLastGoodAt !== 0 && performance.now() - statusLastGoodAt < BOARD_LINK_TIMEOUT_MS;
+}
+
+// `sentAt` is when the request left, not when the answer arrived - see outOnStatus for why
+// that distinction matters.
+function onBoardStatus(s, sentAt) {
+  statusLastGoodAt = performance.now();
+  outOnStatus(s, sentAt);
+  resetStep(s);
+  maybeAutoHomeRail(s);
+}
+
+function pollBoardStatus() {
+  if (statusPollInFlight) return;
+  statusPollInFlight = true;
+  const sentAt = performance.now();
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), STATUS_POLL_TIMEOUT_MS);
+  fetch(ESP32_URL + "/api/status", { signal: abort.signal })
+    .then(r => r.json())
+    .then(s => onBoardStatus(s, sentAt))
+    .catch(() => {})
+    .finally(() => { clearTimeout(timer); statusPollInFlight = false; });
+}
+
+setInterval(() => {
+  const fast = outPhase === "retracting" || resetActive;
+  const due = fast ? STATUS_POLL_FAST_MS : STATUS_POLL_IDLE_MS;
+  const now = performance.now();
+  if (resetActive && now - resetStartedAt > RESET_TIMEOUT_MS) {
+    console.warn("Reset: the board did not answer - giving up on the rail part.");
+    resetActive = false;
+  }
+  if (now - statusLastPollAt < due) return;
+  statusLastPollAt = now;
+  pollBoardStatus();
+}, 50);
+
+// ---- rail auto-home ---------------------------------------------------------------------
+// The firmware homes once in setup(), and that attempt has been seen to fail while a manual
+// /api/home moments later succeeds. Every motion endpoint is gated on `homed`, so a board that
+// loses its boot home is a shelf that silently refuses every eject - which is fine when you
+// are standing at a keyboard and fatal when the thing is running on its own.
+//
+// So the app retries it - ONCE per app session. This is a recovery for a failed boot home,
+// not a watchdog. If the board is rebooting repeatedly, re-homing on every reboot would drive
+// the carriage up and down the rail forever instead of letting the real fault be noticed.
+// Homing sweeps the whole rail: keep hands out of the shelf when starting the app.
+let railAutoHomeDone = false;
+
+function maybeAutoHomeRail(s) {
+  if (railAutoHomeDone) return;
+  if (s.homed) { railAutoHomeDone = true; return; } // already homed: nothing to recover
+  if (s.moving || s.selectPhase !== "idle") return; // mid-move, ask again on the next poll
+  railAutoHomeDone = true;
+  console.warn("Rail reports not homed - retrying /api/home once.");
+  homeRail();
+}
+
+// ---- the outro dance: D ---------------------------------------------------------------------
+// Every case on the shelf lights up in a looping sequence of patterns -- a chase, an alternating
+// blink, a ripple from the middle, marching thirds, a sparkle, a full flash -- until D is
+// pressed again (or the shelf is reset with Esc). It is a closing flourish for the end of a
+// session or a video, so while it runs the shelf is a light show and nothing else: hovering,
+// selecting and the lever are all off.
+//
+// The patterns are functions of (position along the shelf, step within the pattern), not lists
+// of slot numbers, so they stay right when cases are added, removed or reordered. "Position"
+// is left-to-right by calibrated x, because slot index is not guaranteed to match what is
+// physically next to what.
+const DANCE_STEP_MS = 135;
+
+// Each move: `steps(n)` = how many beats it lasts for n cases; `lit(i, t, n)` = is case i on
+// at beat t. Played in this order, then round again.
+const DANCE_MOVES = [
+  { // chase: a three-wide block runs to the right end and back
+    steps: n => 2 * n,
+    lit: (i, t, n) => Math.abs(i - (t < n ? t : 2 * n - 1 - t)) <= 1
+  },
+  { // odds and evens swapping
+    steps: () => 8,
+    lit: (i, t) => (i + t) % 2 === 0
+  },
+  { // ripple: a ring opening out from the middle, twice
+    steps: n => 2 * (Math.ceil(n / 2) + 1),
+    lit: (i, t, n) => Math.round(Math.abs(i - (n - 1) / 2)) === t % (Math.ceil(n / 2) + 1)
+  },
+  { // marching thirds: every third case, the whole row stepping sideways
+    steps: () => 12,
+    lit: (i, t) => (((i - t) % 3) + 3) % 3 === 0
+  },
+  { // curtain: fills in from both ends to the middle, then empties again
+    steps: n => 2 * Math.ceil(n / 2) + 2,
+    lit: (i, t, n) => {
+      const half = Math.ceil(n / 2) + 1;
+      const depth = t < half ? t : 2 * half - 1 - t;
+      return Math.min(i, n - 1 - i) < depth;
+    }
+  },
+  { // sparkle: a different random handful every beat
+    steps: () => 14,
+    lit: () => Math.random() < 0.4
+  },
+  { // everyone, three times
+    steps: () => 6,
+    lit: (i, t) => t % 2 === 0
+  }
+];
+
+let dancing = false;
+let danceTimer = null;
+let danceMove = 0;
+let danceBeat = 0;
+
+function danceFrame() {
+  if (!dancing) return;
+  const order = [];
+  for (let i = 0; i < NUM_SLOTS; i++) if (SLOTS[i].kind !== "empty" && rects[i]) order.push(i);
+  order.sort((a, b) => rects[a].x - rects[b].x);
+  const n = order.length;
+
+  const move = DANCE_MOVES[danceMove];
+  const on = new Set();
+  order.forEach((slot, i) => { if (move.lit(i, danceBeat, n)) on.add(slot); });
+  slotEls.forEach((el, slot) => el.classList.toggle("dance", on.has(slot)));
+
+  if (++danceBeat >= move.steps(n)) {
+    danceBeat = 0;
+    danceMove = (danceMove + 1) % DANCE_MOVES.length;
+  }
+  danceTimer = setTimeout(danceFrame, DANCE_STEP_MS);
+}
+
+function startDance() {
+  if (dancing || calibMode) return;
+  // Not with a case sticking out of the shelf: that state has its own highlight and its own
+  // "next input puts it back" rule, and a light show on top of it would hide both.
+  if (gameIsOut() || spinning) return;
+  if (searchMode) closeSearch();
+  if (settingsMenuOpen) closeSettingsMenu();
+  dancing = true;
+  danceMove = 0;
+  danceBeat = 0;
+  setActive(-1);
+  hideLabel();
+  document.body.classList.add("dancing");
+  danceFrame();
+}
+
+function stopDance() {
+  if (!dancing) return;
+  dancing = false;
+  if (danceTimer !== null) { clearTimeout(danceTimer); danceTimer = null; }
+  document.body.classList.remove("dancing");
+  slotEls.forEach(el => el.classList.remove("dance"));
+  hoveredIndex = -2; // force mousemove to re-evaluate fresh on next move
+}
+
+function toggleDance() { dancing ? stopDance() : startDance(); }
+
+// ---- restart: Esc (or Ctrl+Shift+Space) ---------------------------------------------------
+// Put the shelf back to its idle state from wherever it has got to, without restarting the
+// app or power-cycling the board: cancels a spin mid-flight, stops the outro dance, drops
+// search and the settings menu, puts back a case that is out, and clears every highlight.
+// If the rail has lost its home (seen after power-up), it re-homes it once everything is in.
+//
+// Handled before every other key, because its whole job is to work from states that are
+// busy swallowing keystrokes.
+//
+// The rail part is a goal, not a single request: resetStep() runs on every status reading
+// until it is done, so one lost request or a board mid-reboot cannot leave the reset half
+// finished. It gives up after RESET_TIMEOUT_MS.
+const RESET_TIMEOUT_MS = 30000;
+let resetActive = false;
+let resetStartedAt = 0;
+
+function restartShelf() {
+  console.log("Restart: returning the shelf to idle.");
+
+  abortSpin();
+  stopDance();
+  if (searchMode) closeSearch();
+  if (settingsMenuOpen) closeSettingsMenu();
+
+  setActive(-1);
+  hideLabel();
+  hoveredIndex = -1;
+  hoveredExtraIndex = -1;
+  gamepadFocusIndex = -1;
+  padMode = false;
+
+  resetActive = true;
+  resetStartedAt = performance.now();
+  statusLastPollAt = 0; // ask for status right now
+
+  if (gameIsOut()) retractGame(() => { setActive(-1); hideLabel(); });
+}
+
+function resetStep(s) {
+  if (!resetActive) return;
+  if (gameIsOut()) return; // the arm goes home before anything else happens
+  resetActive = false;
+  // A rail that lost its home refuses every push. A rail that is already homed is left
+  // exactly where it is: a reset should not sweep the carriage for no reason.
+  if (!s.homed && !s.moving && s.selectPhase === "idle") {
+    console.warn("Reset: rail is not homed - homing it.");
+    homeRail();
+  }
+}
+
+// ---- a case that is out stays out ---------------------------------------------------------
+// Selecting a game pushes its case forward and LEAVES it there. For as long as it is out:
+//   - that slot is the only thing lit, and its info card fills the name-tag box;
+//   - the cursor still moves, but hovering lights nothing and selects nothing;
+//   - the NEXT input of any kind -- a click anywhere, a key, a pad button -- puts it back.
+// Normal behaviour resumes only once the board reports the arm fully home, not when the
+// retract was asked for: until then there is still an arm in the shelf.
+//
+let outIndex = -1;        // the slot that is out, -1 = none
+let outPhase = "idle";    // idle | out | retracting
+let outRetractAckAt = 0;  // when the board acknowledged the retract (0 = not yet)
+let outRetractTimer = null;
+let outAfterRetract = null;
+
+// Give up waiting for the board after this long and unlock anyway: hardware that stops
+// answering must never be able to lock the UI.
+const OUT_RETRACT_TIMEOUT_MS = 6000;
+
+function gameIsOut() { return outPhase !== "idle"; }
+
+function pushGameOut(idx) {
+  outIndex = idx;
+  outPhase = "out";
+  hoveredIndex = idx;
+  setActive(idx);
+  deliverGame(idx, true);
+  showGameCard(idx);
+  playPushChime();
+}
+
+function finishRetract() {
+  if (outRetractTimer !== null) { clearTimeout(outRetractTimer); outRetractTimer = null; }
+  if (outPhase === "idle") return;
+  outPhase = "idle";
+  outIndex = -1;
+  outRetractAckAt = 0;
+  hoveredIndex = -2; // force mousemove to re-evaluate fresh on next move
+  setActive(-1);
+  hideLabel();
+  const then = outAfterRetract;
+  outAfterRetract = null;
+  if (then) then();
+}
+
+// `then` runs once the case is back in (immediately if nothing was out).
+function retractGame(then) {
+  if (outPhase === "idle") { if (then) then(); return; }
+  if (then) outAfterRetract = then;
+  if (outPhase === "retracting") return; // already on its way - extra clicks change nothing
+  outPhase = "retracting";
+  playPullChime(); // on the input that asks for it, not when the arm lands - feedback first
+  outRetractAckAt = 0;
+
+  // No board to wait for: there is no arm moving that we know of, so don't hold the UI.
+  if (!boardLinkLive()) {
+    fetch(ESP32_URL + "/api/retract").catch(() => {});
+    outRetractTimer = setTimeout(finishRetract, 300);
+    return;
+  }
+
+  outRetractTimer = setTimeout(finishRetract, OUT_RETRACT_TIMEOUT_MS);
+  fetch(ESP32_URL + "/api/retract")
+    .then(r => {
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      outRetractAckAt = performance.now();
+      statusLastPollAt = 0; // ask for status straight away instead of waiting out the poll gap
+    })
+    // No answer, or a board without /api/retract: nothing to wait for.
+    .catch(() => finishRetract());
+}
+
+// Called with every status reading. Only a reading REQUESTED after the retract was
+// acknowledged counts: one already in flight describes the arm as it was before, and at this
+// board's round-trip times that stale "idle"/"push" would arrive looking perfectly current.
+function outOnStatus(s, sentAt) {
+  if (outPhase !== "retracting" || !outRetractAckAt || sentAt < outRetractAckAt) return;
+  if (s.selectPhase === "idle" && !s.held) finishRetract();
+}
+
+// Capture phase, so it runs before the stage's own click handler and the name tag's: while a
+// case is out, a click ANYWHERE means "put it back" and nothing else.
+document.addEventListener("click", (e) => {
+  if (!gameIsOut()) return;
+  e.stopPropagation();
+  e.preventDefault();
+  if (!acceptSelectInput()) return; // second half of the press that pushed it out - not a new input
+  retractGame();
+}, true);
+
+
+// ---- rail calibration (R): teach the carriage where each slot physically is. Keyboard-driven,
+//      because you are watching the shelf and the pusher arm, not the screen - arrows jog, [ / ]
+//      walk the slots, Enter saves the current carriage position onto the highlighted slot.
+//
+//      The saved number is the carriage position at which THIS slot's own pusher lines up with
+//      the case. The two arms sit at different points on the carriage, so a slot moved across
+//      the A/B split has to be re-taught even though the case never moved. ----
+// How far one arrow press moves the carriage. Kept in localStorage rather than as a constant
+// because the useful value changes as you work: coarse while finding the case, one or two steps
+// while lining the arm up with its edge. Shift multiplies it by RAIL_JOG_SHIFT_FACTOR.
+const RAIL_JOG_DEFAULT = 20;
+const RAIL_JOG_SHIFT_FACTOR = 10;
+let railJogStep = parseInt(localStorage.getItem("shelf_rail_jog") || "", 10);
+if (!Number.isFinite(railJogStep) || railJogStep < 1) railJogStep = RAIL_JOG_DEFAULT;
+
+function setRailJogStep(v) {
+  const n = parseInt(v, 10);
+  if (!Number.isFinite(n) || n < 1) return;
+  railJogStep = n;
+  localStorage.setItem("shelf_rail_jog", String(railJogStep));
+}
+
+let railCalibIndex = 0;
+
+function railCalibJog(steps) {
+  fetch(ESP32_URL + "/api/jog?steps=" + steps).catch(() => {});
+}
+
+// Speed and acceleration live on the board, not here - they describe the rail, and the firmware
+// persists them in NVS. The panel just writes them and lets the next /api/status read them back.
+function railSetSpeed(v) {
+  fetch(ESP32_URL + "/api/speed?stepspersec=" + Math.round(v)).catch(() => {});
+}
+
+function railSetAccel(v) {
+  fetch(ESP32_URL + "/api/accel?stepspersec2=" + Math.round(v)).catch(() => {});
+}
+
+// Assign this slot's arm. The firmware drops the slot's taught position when the arm changes,
+// because the two arms sit at different points on the carriage - the position that lined A up
+// with the case does not line B up with it.
+function railSetPusher(arm) {
+  fetch(ESP32_URL + "/api/slotpusher?game=" + railCalibIndex + "&pusher=" + arm)
+    .then(r => r.ok ? loadRailSlots() : r.text().then(t => console.warn("Arm change refused: " + t)))
+    .catch(err => console.warn("Arm change failed:", err));
+}
+
+// Type an exact carriage position for this slot, instead of jogging to it. Useful for copying a
+// measured value across, or nudging a slot by a known amount without watching the shelf.
+function railSetExactSteps(v) {
+  const n = parseInt(v, 10);
+  if (!Number.isFinite(n) || n < 0) return;
+  fetch(ESP32_URL + "/api/setslot?game=" + railCalibIndex + "&steps=" + n)
+    .then(r => r.ok ? loadRailSlots() : r.text().then(t => console.warn("Teach refused: " + t)))
+    .catch(err => console.warn("Teach slot failed:", err));
+}
+
+function railCalibJumpSlot(delta) {
+  railCalibIndex = (railCalibIndex + delta + NUM_SLOTS) % NUM_SLOTS;
+  // Drive to the slot's existing position if it has one, so stepping through the table walks the
+  // carriage along the shelf and you can see at a glance which slots are already right.
+  if (railSlotTaught(railCalibIndex) && railSlots) sendRailGoto(railCalibIndex);
+  refreshCalibUI();
+}
+
+function railCalibSave() {
+  fetch(ESP32_URL + "/api/setslot?game=" + railCalibIndex)
+    .then(r => r.ok ? loadRailSlots() : r.text().then(t => console.warn("Teach refused: " + t)))
+    .catch(err => console.warn("Teach slot failed:", err));
+}
+
+function railCalibClear() {
+  fetch(ESP32_URL + "/api/clearslot?game=" + railCalibIndex)
+    .then(() => loadRailSlots())
+    .catch(err => console.warn("Clear slot failed:", err));
+}
+
+// ---- the panel's own controls ----
+const railPanelEl = document.getElementById("railPanel");
+const railJogStepEl = document.getElementById("railJogStep");
+const railSpeedEl = document.getElementById("railSpeed");
+const railAccelEl = document.getElementById("railAccel");
+const railStepValueEl = document.getElementById("railStepValue");
+const railArmAEl = document.getElementById("railArmA");
+const railArmBEl = document.getElementById("railArmB");
+
+railJogStepEl.value = railJogStep;
+railJogStepEl.addEventListener("change", () => setRailJogStep(railJogStepEl.value));
+railSpeedEl.addEventListener("change", () => railSetSpeed(railSpeedEl.value));
+railAccelEl.addEventListener("change", () => railSetAccel(railAccelEl.value));
+document.getElementById("railSetSteps").addEventListener("click", () => railSetExactSteps(railStepValueEl.value));
+document.getElementById("railSaveHere").addEventListener("click", () => railCalibSave());
+document.getElementById("railClearSlot").addEventListener("click", () => railCalibClear());
+document.getElementById("railTestPush").addEventListener("click", () => railPush());
+railArmAEl.addEventListener("click", () => railSetPusher("a"));
+railArmBEl.addEventListener("click", () => railSetPusher("b"));
+
+// Typing in the panel must not reach the global hotkeys - an "a" in the speed box would
+// otherwise reassign the slot's arm, and the arrow keys would jog the motor.
+railPanelEl.addEventListener("keydown", e => e.stopPropagation());
+
+// Values the user is mid-edit must survive the 300ms status poll, or the field fights the typing.
+function railFieldIdle(el) { return document.activeElement !== el; }
+
+function refreshRailPanel() {
+  railPanelEl.classList.toggle("show", calibMode === "rail");
+  if (calibMode !== "rail") return;
+
+  // Park the panel under the hint banner rather than at a fixed offset: the banner wraps to a
+  // different number of lines depending on the projector's width, and a constant top overlapped it.
+  railPanelEl.style.top = (hint.offsetTop + hint.offsetHeight + 8) + "px";
+
+  if (railFieldIdle(railJogStepEl)) railJogStepEl.value = railJogStep;
+  if (railStatus) {
+    if (railFieldIdle(railSpeedEl)) railSpeedEl.value = Math.round(railStatus.maxSpeed);
+    if (railFieldIdle(railAccelEl)) railAccelEl.value = Math.round(railStatus.accel);
+    railStepValueEl.max = railStatus.railMaxSteps;
+  }
+
+  const entry = railSlots ? railSlots[railCalibIndex] : null;
+  if (railFieldIdle(railStepValueEl)) {
+    // Pre-fill with the saved value if there is one, otherwise where the carriage is standing -
+    // so SET is always a sane "commit roughly what I'm looking at".
+    railStepValueEl.value = entry && entry.set ? entry.step : (railStatus ? railStatus.pos : 0);
+  }
+  const arm = entry ? entry.pusher : null;
+  railArmAEl.classList.toggle("on", arm === "A");
+  railArmBEl.classList.toggle("on", arm === "B");
+}
+
+// Refresh the live carriage readout, but only while the calibration overlay is actually up -
+// at runtime the app has no reason to poll the board's position at all.
+setInterval(() => {
+  if (calibMode !== "rail") return;
+  fetch(ESP32_URL + "/api/status")
+    .then(r => r.json())
+    .then(s => { railStatus = s; refreshCalibUI(); })
+    .catch(() => { railStatus = null; refreshCalibUI(); });
+}, 300);
+
+loadRailSlots();
+
+// ---- test mode: T (outside calibration) toggles it. While active, clicking a slot drives
+//      the rail there and fires its pusher once, without the info card or the "stays out"
+//      hold - purely for checking the mechanics slot by slot. ----
+let testMode = false;
+
+const testModeIndicatorEl = document.getElementById("testModeIndicator");
+
+function refreshTestModeUI() {
+  const letter = testMode ? "T" : "";
+  testModeIndicatorEl.textContent = letter;
+  testModeIndicatorEl.style.display = (letter && !calibMode) ? "block" : "none";
+}
+
+function toggleTestMode() {
+  testMode = !testMode;
+  refreshTestModeUI();
+}
+
+// ---- settings menu: a visible equivalent of the hotkeys, for anyone who doesn't know or
+//      remember them. The hotkeys still work - this is an additional path, not a replacement. ----
+let settingsMenuOpen = false;
+const settingsMenuEl = document.getElementById("settingsMenu");
+const settingsTestModeToggleEl = document.getElementById("settingsTestModeToggle");
+const settingsClassicToggleEl = document.getElementById("settingsClassicToggle");
+
+function refreshSettingsMenuUI() {
+  settingsClassicToggleEl.textContent = "Visual Style: " + (classicMode ? "CLASSIC (gold glow)" : "COLOUR") + " (K)";
+  settingsTestModeToggleEl.textContent = "Test Mode: " + (testMode ? "ON" : "OFF") + " (T)";
+}
+
+function openSettingsMenu() {
+  if (calibMode || searchMode || spinning || gameIsOut()) return;
+  settingsMenuOpen = true;
+  refreshSettingsMenuUI();
+  settingsMenuEl.style.display = "flex";
+}
+
+function closeSettingsMenu() {
+  settingsMenuOpen = false;
+  settingsMenuEl.style.display = "none";
+}
+
+function toggleSettingsMenu() {
+  settingsMenuOpen ? closeSettingsMenu() : openSettingsMenu();
+}
+
+document.querySelectorAll("#settingsMenu [data-calib]").forEach(btn => {
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const mode = btn.getAttribute("data-calib");
+    closeSettingsMenu();
+    enterCalib(mode);
+  });
+});
+
+document.getElementById("settingsDance").addEventListener("click", (e) => {
+  e.stopPropagation();
+  closeSettingsMenu();
+  toggleDance();
+});
+
+settingsClassicToggleEl.addEventListener("click", (e) => {
+  e.stopPropagation();
+  toggleClassicMode();
+  refreshSettingsMenuUI();
+});
+
+settingsTestModeToggleEl.addEventListener("click", (e) => {
+  e.stopPropagation();
+  toggleTestMode();
+  refreshSettingsMenuUI();
+});
+
+document.getElementById("settingsReset").addEventListener("click", (e) => {
+  e.stopPropagation();
+  restartShelf();
+});
+
+document.getElementById("settingsHomeRail").addEventListener("click", (e) => {
+  e.stopPropagation();
+  homeRail();
+});
+
+document.getElementById("settingsPushRail").addEventListener("click", (e) => {
+  e.stopPropagation();
+  railPush();
+});
+
+document.getElementById("settingsCloseBtn").addEventListener("click", (e) => {
+  e.stopPropagation();
+  closeSettingsMenu();
+});
+
+// Shared by mouse/remote clicks AND gamepad select-button presses below, so both input
+// paths go through identical guards/behavior instead of two copies that could drift apart.
+// ---- Every path that pushes a case leaves THAT slot as the only highlight.
+//
+//      The normal path gets this free via pushGameOut(). Test mode used to just
+//      push and leave the highlight untouched, on the reasoning that it belongs to the cursor /
+//      D-pad and moving it would fight whatever you were pointing at. That reasoning only holds
+//      when the selection came from the cursor or D-pad, where the highlight is already on this
+//      slot and setActive(idx) is a no-op. It breaks for a selection made from the search box:
+//      closeSearch() runs setActive(-1) on the way out, so the case was ejected with the shelf
+//      completely dark, or with the other search matches still lit and the pushed one not.
+//
+//      setActive(idx) is right for all three entry points, and it doesn't pin the highlight -
+//      hover and D-pad navigation still move it immediately afterwards. ----
+function selectSlot(idx) {
+  if (calibMode || searchMode || spinning || settingsMenuOpen) return;
+  if (idx === -1) return;
+  if (dancing) return;     // no selecting during the outro - D again to end it
+  if (gameIsOut()) return; // one case out at a time - the next input puts it back instead
+
+  // The Randomizer: Roulette case is the physical lever, not a game - picking it starts a spin
+  // instead of ejecting anything. Mirrors what pulling the real lever does via the ESP32.
+  if (SLOTS[idx].kind === "lever") { runSpin(); return; }
+  if (SLOTS[idx].kind === "empty") return; // clear cases at the end: nothing behind them
+
+  if (testMode) {
+    setActive(idx); // see note below - the pushed slot is always the one left lit
+    deliverGame(idx); // exercises the real rail movement + pusher for this exact slot
+    return;
+  }
+
+  // Push it out and leave it out - see "a case that is out stays out" above.
+  pushGameOut(idx);
+}
+
+stage.addEventListener("click", (e) => {
+  if (calibMode) return; // calibration has its own click handler; don't spend the debounce here
+  if (!acceptSelectInput()) return;
+  // In pad mode the click is the remote's A button, and it means the highlighted game -
+  // wherever the idle cursor happens to be pointing.
+  selectSlot(padMode && gamepadFocusIndex !== -1 ? gamepadFocusIndex : slotAtPoint(e.clientX, e.clientY));
+});
+
+// ---- native gamepad support: D-pad or left stick moves between slots, a face button
+//      selects - a real alternate input path, not a fake mouse. Mirrors the polling
+//      pattern the new rail-system firmware's own web UI already uses for its controls. ----
+let gamepadFocusIndex = -1; // which slot the gamepad has "cursor" on, independent of mouse hover
+let lastGamepadNavTime = 0;
+const GAMEPAD_NAV_REPEAT_MS = 220; // debounce so holding a direction doesn't fly through slots
+let lastGamepadSelectPressed = false;
+let lastGamepadCancelPressed = false;
+let lastGamepadPushPressed = false;
+
+function gamepadInputBlocked() {
+  return calibMode || searchMode || spinning || settingsMenuOpen || gameIsOut() || dancing;
+}
+
+function rectCenter(r) { return { x: r.x + r.w / 2, y: r.y + r.h / 2 }; }
+
+// Snap to whichever calibrated box is nearest in the direction pressed, rather than
+// stepping through slot indices - the boxes are hand-calibrated to the physical shelf,
+// so index order doesn't necessarily match what's visually next to what.
+function pickSlotInDirection(fromIdx, dx, dy) {
+  const valid = [];
+  for (let i = 0; i < rects.length; i++) {
+    const r = rects[i];
+    if (r && r.w > 0 && r.h > 0) valid.push(i);
+  }
+  if (valid.length === 0) return -1;
+
+  // nothing focused yet: enter from the edge furthest upstream of the pressed direction
+  if (fromIdx === -1 || !rects[fromIdx] || !(rects[fromIdx].w > 0)) {
+    let best = valid[0], bestScore = Infinity;
+    for (const i of valid) {
+      const c = rectCenter(rects[i]);
+      const score = c.x * dx + c.y * dy;
+      if (score < bestScore) { bestScore = score; best = i; }
+    }
+    return best;
+  }
+
+  const from = rectCenter(rects[fromIdx]);
+  let best = -1, bestScore = Infinity;
+  for (const i of valid) {
+    if (i === fromIdx) continue;
+    const c = rectCenter(rects[i]);
+    const along = (c.x - from.x) * dx + (c.y - from.y) * dy;          // travel along the pressed axis
+    if (along <= 1) continue;                                          // behind us - not a candidate
+    const across = Math.abs((c.x - from.x) * dy - (c.y - from.y) * dx); // drift off that axis
+    const score = along + across * 2;                                  // nearest, but favour straight ahead
+    if (score < bestScore) { bestScore = score; best = i; }
+  }
+  if (best !== -1) return best;
+
+  // nothing that way - wrap to the far end so the D-pad keeps cycling instead of dead-ending
+  let wrap = fromIdx, wrapScore = Infinity;
+  for (const i of valid) {
+    const c = rectCenter(rects[i]);
+    const score = (c.x - from.x) * dx + (c.y - from.y) * dy;
+    if (score < wrapScore) { wrapScore = score; wrap = i; }
+  }
+  return wrap;
+}
+
+// Arrow keys drive the exact same focus movement the D-pad does - see the keydown handler.
+const ARROW_DIRECTIONS = {
+  ArrowLeft:  [-1,  0],
+  ArrowRight: [ 1,  0],
+  ArrowUp:    [ 0, -1],
+  ArrowDown:  [ 0,  1]
+};
+
+// D-pad / arrow-key navigation is SWITCHED OFF for now, by request. With a remote the D-pad
+// and the pointer are the same device, and pad mode kept winning: once a D-pad press had taken
+// ownership of the highlight, A went on selecting the pad's game even with the pointer plainly
+// resting on a different one. Pointing and pressing A is the only way to pick a game now, and
+// it behaves exactly as the laptop's mouse does.
+//
+// Everything behind this flag is intact - pickSlotInDirection, pad mode, railGoto - so turning
+// it back on is this one line. Rail calibration's arrow-key jog does not go through here and
+// is unaffected.
+const DPAD_ENABLED = false;
+
+function moveGamepadFocus(dx, dy) {
+  if (!DPAD_ENABLED) return;
+  const idx = pickSlotInDirection(gamepadFocusIndex, dx, dy);
+  if (idx === -1) return; // nothing calibrated yet
+  gamepadFocusIndex = idx;
+  enterPadMode(); // the D-pad owns the highlight now - see "pad mode"
+  hoveredIndex = gamepadFocusIndex;
+  setActive(gamepadFocusIndex);
+  showLabel(gamepadFocusIndex);
+  playScrollTick();
+  railGoto(gamepadFocusIndex); // the carriage tracks the highlight, one slot per press
+}
+
+// ---- D-pad reading. Only pads reporting mapping:"standard" put the D-pad on buttons
+//      12-15; plenty of controllers expose it as a hat axis instead, which is why the
+//      stick worked and the D-pad didn't. Try all three known layouts. ----
+let hatRestValue = null; // whatever the hat axis reads when untouched, learned on first poll
+
+function readDpad(gp) {
+  const b = gp.buttons || [], axes = gp.axes || [];
+
+  // 1. standard mapping: dedicated D-pad buttons
+  let dx = 0, dy = 0;
+  if (b[14] && b[14].pressed) dx = -1;
+  else if (b[15] && b[15].pressed) dx = 1;
+  if (b[12] && b[12].pressed) dy = -1;
+  else if (b[13] && b[13].pressed) dy = 1;
+  if (dx || dy) return { dx, dy };
+
+  // 2. D-pad as its own +/-1 axis pair (common on DirectInput pads)
+  if (axes.length > 7) {
+    if (Math.abs(axes[6]) > 0.5) dx = axes[6] > 0 ? 1 : -1;
+    if (Math.abs(axes[7]) > 0.5) dy = axes[7] > 0 ? 1 : -1;
+    if (dx || dy) return { dx, dy };
+  }
+
+  // 3. 8-way hat packed into one axis, usually axes[9]. Resting value varies by pad
+  //    (often ~3.29, sometimes 0), so learn it rather than assuming.
+  if (axes.length > 9) {
+    const h = axes[9];
+    if (hatRestValue === null) hatRestValue = h;
+    if (Math.abs(h - hatRestValue) > 0.05 && h >= -1.05 && h <= 1.05) {
+      const dirs = [[0,-1], [1,-1], [1,0], [1,1], [0,1], [-1,1], [-1,0], [-1,-1]];
+      const d = dirs[Math.round(((h + 1) / 2) * 7) % 8];
+      return { dx: d[0], dy: d[1] };
+    }
+  }
+
+  return { dx: 0, dy: 0 };
+}
+
+function pollGamepad() {
+  const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+  let gp = null;
+  for (let i = 0; i < pads.length; i++) {
+    if (pads[i] && pads[i].connected) { gp = pads[i]; break; }
+  }
+
+  if (gp && gameIsOut()) {
+    // A case is out: either face button puts it back, and navigation is suspended until it is
+    // home - same as mouse/keyboard input. Edge-triggered against the previous frame, so the
+    // very press that pushed the case out cannot also be read as the one that retracts it.
+    const confirmPressed = gp.buttons[0] && gp.buttons[0].pressed;
+    const cancelPressed = gp.buttons[1] && gp.buttons[1].pressed;
+    if ((confirmPressed && !lastGamepadSelectPressed) || (cancelPressed && !lastGamepadCancelPressed)) retractGame();
+    lastGamepadSelectPressed = confirmPressed;
+    lastGamepadCancelPressed = cancelPressed;
+  } else if (gp && !gamepadInputBlocked()) {
+    const now = performance.now();
+
+    const dpad = readDpad(gp);
+    let axisX = (gp.axes && gp.axes.length > 0) ? gp.axes[0] : 0;
+    let axisY = (gp.axes && gp.axes.length > 1) ? gp.axes[1] : 0;
+    // coarser deadzone than a driving control - this is discrete step navigation
+    if (Math.abs(axisX) < 0.5) axisX = 0;
+    if (Math.abs(axisY) < 0.5) axisY = 0;
+
+    if (now - lastGamepadNavTime > GAMEPAD_NAV_REPEAT_MS) {
+      const navX = dpad.dx || axisX;
+      const navY = dpad.dy || axisY;
+      if (navX < 0) { moveGamepadFocus(-1, 0); lastGamepadNavTime = now; }
+      else if (navX > 0) { moveGamepadFocus(1, 0); lastGamepadNavTime = now; }
+      else if (navY < 0) { moveGamepadFocus(0, -1); lastGamepadNavTime = now; }
+      else if (navY > 0) { moveGamepadFocus(0, 1); lastGamepadNavTime = now; }
+    }
+
+    const selectPressed = gp.buttons[0] && gp.buttons[0].pressed; // A / Cross / bottom face button
+    if (selectPressed && !lastGamepadSelectPressed) selectSlot(gamepadFocusIndex);
+    lastGamepadSelectPressed = selectPressed;
+    lastGamepadCancelPressed = false;
+
+    const pushPressed = gp.buttons[4] && gp.buttons[4].pressed; // L1 / LB - fire the pusher where it stands
+    if (pushPressed && !lastGamepadPushPressed) railPush();
+    lastGamepadPushPressed = pushPressed;
+  } else {
+    lastGamepadSelectPressed = false;
+    lastGamepadCancelPressed = false;
+    lastGamepadPushPressed = false;
+  }
+
+  requestAnimationFrame(pollGamepad);
+}
+
+requestAnimationFrame(pollGamepad);
+
+// ---- spin-the-wheel: the Randomizer: Roulette lever (slot 0, wired to the ESP32's spin
+//      button) triggers a spin, which hands off to selectSlot() same as a direct click.
+//
+//      Four highlights set off at once in different directions and at different speeds, then
+//      get cut one at a time until a single one is left, which decelerates onto the target.
+//
+//      The landing slot used to be a constant, because the single pusher servo physically sat
+//      behind exactly one case and that was the only game the shelf could eject. The rail
+//      removes that constraint: the carriage can reach any slot it has been taught, so the
+//      roulette picks a real random one. Slots the rail has NOT been taught are excluded -
+//      landing on one would spin the wheel and then eject nothing. ----
+const SPIN_FALLBACK_INDEX = 11; // any game slot; used only if the rail is offline or nothing is taught
+
+function pickSpinTarget() {
+  const candidates = [];
+  for (let i = 0; i < NUM_SLOTS; i++) {
+    if (SLOTS[i].kind !== "game") continue;
+    if (railSlots && !railSlotTaught(i)) continue;
+    candidates.push(i);
+  }
+  if (candidates.length === 0) return SPIN_FALLBACK_INDEX;
+  return candidates[Math.floor(Math.random() * candidates.length)];
+}
+const SPIN_DURATION_MS = 8000; // total visual spin duration; step timing is derived from this, not a fixed per-step curve
+
+// Runner 0 is the survivor: the only one that reaches the target, and the ONLY one that ticks
+// audibly. Four runners each calling playScrollTick() at their own rate stacks into a rattle
+// rather than a rhythm, so the decoys move silently.
+// `startOffset` spaces the four out around the shelf at kick-off. Starting them all on the same
+// slot made them collide constantly, and two runners on one slot render as a single highlight -
+// so the count kept flickering 4-3-4 and an overlap was easy to misread as one of them dying.
+// The survivor starts at offset 0, i.e. wherever the highlight already was.
+const SPIN_RUNNERS = [
+  { stepBy:  1, startOffset:  0, diesAtFrac: null },  // survivor - decelerates onto the spin target
+  { stepBy: -1, startOffset:  5, diesAtFrac: 0.45 },
+  { stepBy:  2, startOffset:  9, diesAtFrac: 0.62 },
+  { stepBy: -3, startOffset: 14, diesAtFrac: 0.78 }
+];
+const SPIN_DECOY_STEP_MS = 90; // decoys run at a steady clip; only the survivor slows down
+
+let spinning = false;
+// Held at module scope so a restart can cancel a spin that is mid-flight. The decoys already
+// bail on `!spinning`, but their pending timers and the survivor's would otherwise keep firing
+// and repainting highlights over whatever the restart just cleared.
+let spinTimers = [];
+
+function abortSpin() {
+  spinning = false;
+  spinTimers.forEach(clearTimeout);
+  spinTimers = [];
+}
+
+function spinTickDisplay(index) {
+  // same logo path as a normal hover; kept as its own function so the spin can stay cheap
+  // if the name tag ever gets a heavier display again.
+  positionNameLabel();
+  showLogoFallback(index);
+}
+
+function runSpin() {
+  if (spinning || calibMode || settingsMenuOpen || gameIsOut() || dancing) return;
+  spinning = true;
+
+  const start = hoveredIndex >= 0 ? hoveredIndex : 0;
+  const spinTarget = pickSpinTarget(); // chosen up front so the deceleration curve can aim at it
+  const t0 = performance.now();
+  const timers = [];
+  spinTimers = timers; // so abortSpin() can cancel this run from outside
+
+  const positions = SPIN_RUNNERS.map(cfg => (start + cfg.startOffset) % NUM_SLOTS);
+  const alive = SPIN_RUNNERS.map(() => true);
+
+  // setActive already accepts an array, so lighting several slots at once needs nothing new.
+  function paint() { setActive(positions.filter((_, i) => alive[i])); }
+
+  // ---- decoys: constant pace, silent, cut at their scheduled moment ----
+  SPIN_RUNNERS.forEach((cfg, i) => {
+    if (cfg.diesAtFrac === null) return;
+    const deadline = SPIN_DURATION_MS * cfg.diesAtFrac;
+    (function decoyTick() {
+      if (!spinning) return; // survivor already landed (or a reset happened) - stop cleanly
+      if (performance.now() - t0 >= deadline) {
+        alive[i] = false; // this highlight disappears; the remaining ones carry on
+        paint();
+        return;
+      }
+      positions[i] = (positions[i] + cfg.stepBy + NUM_SLOTS) % NUM_SLOTS;
+      paint();
+      timers.push(setTimeout(decoyTick, SPIN_DECOY_STEP_MS));
+    })();
+  });
+
+  // ---- survivor: decelerates and lands exactly on the target ----
+  const stepBy = SPIN_RUNNERS[0].stepBy;
+  const loops = 3; // full loops around the shelf before landing, purely for showmanship
+  let totalSteps = loops * NUM_SLOTS + ((spinTarget - start + NUM_SLOTS) % NUM_SLOTS);
+  if (totalSteps === 0) totalSteps = NUM_SLOTS; // always spin at least once, even if already on target
+
+  // derive per-step delays from SPIN_DURATION_MS: keep the same decelerating shape
+  // (starts fast, slows near the end) but scale it so the steps sum to the total duration.
+  const weights = [];
+  for (let i = 1; i <= totalSteps; i++) weights.push(Math.pow(i / totalSteps, 2.5));
+  const weightSum = weights.reduce((a, b) => a + b, 0);
+  const delays = weights.map(w => (w / weightSum) * SPIN_DURATION_MS);
+
+  let step = 0;
+
+  function tick() {
+    if (!spinning) return; // aborted by a restart - the decoys check this too
+    const idx = (start + step * stepBy + NUM_SLOTS * totalSteps) % NUM_SLOTS;
+    positions[0] = idx;
+    paint();
+    playScrollTick(); // survivor only - see SPIN_RUNNERS
+
+    if (step >= totalSteps) {
+      // landed - hand off to the same selection path as a direct click (push out and hold)
+      spinning = false;
+      timers.forEach(clearTimeout); // any decoy still pending stops here
+      selectSlot(idx);
+      return;
+    }
+
+    spinTickDisplay(idx);
+    const delay = delays[step];
+    step++;
+    timers.push(setTimeout(tick, delay));
+  }
+
+  tick();
+}
+
+// poll the ESP32's GPIO4 randomiser lever over WiFi - see /spin-status in the firmware. The
+// endpoint is latched: the flag is set on the lever's press edge and cleared when this poll
+// collects it, so a pull between two 200 ms polls can't vanish and a slow release can't read
+// as several spins.
+let spinPollInFlight = false;
+setInterval(() => {
+  if (spinning || calibMode || settingsMenuOpen || gameIsOut() || dancing) return;
+  if (spinPollInFlight) { console.warn("spin-status poll still in flight - previous request hasn't resolved yet"); return; }
+  spinPollInFlight = true;
+  const sentAt = performance.now();
+  fetch(ESP32_URL + "/spin-status")
+    .then(r => { console.log("spin-status round trip: " + Math.round(performance.now() - sentAt) + "ms"); return r.json(); })
+    .then(data => { if (data.pressed) { console.log("spin-status reported pressed - starting spin now"); runSpin(); } })
+    .catch(() => {}) // silently ignore - network hiccups shouldn't spam the console every 200ms
+    .finally(() => { spinPollInFlight = false; });
+}, 200);
+
+// ---- calibration: 'c' = highlight boxes. Top/bottom are the SAME for every game (they're all
+//      the same height), so those are set ONCE and reused; only left/right are set per slot.
+//      'b' = the single shared name-tag box (still its own 4-edge click, unrelated to the above). ----
+let calibMode = null;
+let calibIndex = 0;
+let calibStage = 0;
+let calibPhase = "tb"; // "tb" = setting the shared top/bottom (once), "lr" = per-slot left/right
+let edgeClicks = {};
+let tbDraft = {};
+let sharedTB = JSON.parse(localStorage.getItem("shelf_shared_tb") || "null"); // {top, bottom} or null
+let guideEls = [];
+
+const hint = document.getElementById("calibHint");
+const calibModeLabel = document.getElementById("calibModeLabel");
+const calibSlotLabel = document.getElementById("calibSlot");
+// Denominator is written from NUM_SLOTS rather than typed into the markup - the shelf's slot
+// count changes whenever a case is added or removed, and the static number went stale silently.
+document.getElementById("calibSlotTotal").textContent = NUM_SLOTS;
+const calibPrompt = document.getElementById("calibPrompt");
+const calibNavHintEl = document.getElementById("calibNavHint");
+const calibExitHintEl = document.getElementById("calibExitHint");
+const CALIB_EXIT_HINT_DEFAULT = calibExitHintEl.textContent;
+// Rail calibration replaces this line with its own key list, so keep the markup's version to
+// restore when highlight calibration comes back.
+const CALIB_NAV_HINT_DEFAULT = calibNavHintEl.innerHTML;
+
+function saveSharedTB() { localStorage.setItem("shelf_shared_tb", JSON.stringify(sharedTB)); }
+
+const STAGE_PROMPTS_LABEL = [
+  "Click the LEFT edge",
+  "Click the RIGHT edge",
+  "Click the TOP edge",
+  "Click the BOTTOM edge"
+];
+
+function currentPrompt() {
+  if (calibPhase === "tb") return calibStage === 0 ? "Click the TOP edge (shared by every game)" : "Click the BOTTOM edge (shared by every game)";
+  return calibStage === 0 ? "Click the LEFT edge" : "Click the RIGHT edge";
+}
+
+function clearGuides() { guideEls.forEach(el => el.remove()); guideEls = []; }
+
+function addGuide(type, pos) {
+  const g = document.createElement("div");
+  g.className = "guide " + type;
+  if (type === "v") g.style.left = pos + "px"; else g.style.top = pos + "px";
+  stage.appendChild(g);
+  guideEls.push(g);
+}
+
+function refreshCalibUI() {
+  refreshRailPanel(); // shows/hides the rail control panel and syncs its fields
+  if (calibMode !== "rail") calibExitHintEl.textContent = CALIB_EXIT_HINT_DEFAULT;
+  const isLabel = calibMode === "label";
+  if (isLabel) {
+    calibModeLabel.textContent = "CALIBRATING NAME TAG BOX (shared by all games)";
+    document.getElementById("calibSlotLine").style.display = "none";
+    document.getElementById("calibNavHint").style.display = "none";
+    calibPrompt.textContent = STAGE_PROMPTS_LABEL[calibStage];
+    setActive(-1);
+    if (labelRect) showLabel(0); else fullyHideLabel();
+    return;
+  }
+
+  if (calibMode === "extra") {
+    calibModeLabel.textContent = "CALIBRATING EXTRA HIGHLIGHT BOX " + (extraBoxes.length + 1) +
+      " (no game attached) - X: clear all " + extraBoxes.length;
+    document.getElementById("calibSlotLine").style.display = "none";
+    document.getElementById("calibNavHint").style.display = "none";
+    calibPrompt.textContent = STAGE_PROMPTS_LABEL[calibStage];
+    setActive(-1);
+    fullyHideLabel();
+    return;
+  }
+
+  if (calibMode === "rail") {
+    const s = SLOTS[railCalibIndex];
+    const taught = railSlots && railSlots[railCalibIndex] && railSlots[railCalibIndex].set
+      ? railSlots[railCalibIndex].step : null;
+    const pusher = railSlots && railSlots[railCalibIndex] ? railSlots[railCalibIndex].pusher : "?";
+
+    let state;
+    if (!railStatus) state = "RAIL OFFLINE - no answer from " + ESP32_URL;
+    else if (!railStatus.homed) state = "NOT HOMED - press 0 to home before jogging";
+    else state = "carriage " + railStatus.pos + (railStatus.moving ? " (moving)" : "");
+
+    calibModeLabel.textContent = "CALIBRATING RAIL POSITIONS - " + state;
+    // Rail mode swallows the other calibration hotkeys so A/B can mean "assign arm", so R is
+    // genuinely the only way out and the shared exit hint would be misleading.
+    calibExitHintEl.textContent = "(press R to exit)";
+    // The shared slot line is worded for the highlight boxes ("slot 1/14"); rail teaching covers
+    // all 17 including the lever and the clear cases, so it says its own count in the prompt.
+    document.getElementById("calibSlotLine").style.display = "none";
+    calibNavHintEl.style.display = "inline";
+    calibNavHintEl.innerHTML =
+      "&larr;/&rarr;: jog " + railJogStep + " &nbsp; Shift: &times;" + RAIL_JOG_SHIFT_FACTOR +
+      " &nbsp; &minus;/+: halve/double jog &nbsp; [ / ]: slot &nbsp; Enter: save &nbsp; " +
+      "Backspace: clear &nbsp; A / B: assign arm &nbsp; P: test push &nbsp; 0: home &nbsp; ";
+    calibPrompt.textContent =
+      "slot " + railCalibIndex + "/" + (NUM_SLOTS - 1) + "  " + (s.title || "(empty case)") +
+      "  -  pusher " + pusher + "  -  saved: " + (taught === null ? "not taught yet" : taught);
+
+    setActive(railCalibIndex);
+    fullyHideLabel();
+    return;
+  }
+
+  // "highlight" mode
+  const settingTB = calibPhase === "tb";
+  calibModeLabel.textContent = settingTB
+    ? "CALIBRATING SHARED TOP/BOTTOM (press T anytime to redo this)"
+    : "CALIBRATING HIGHLIGHT BOX";
+  calibNavHintEl.innerHTML = CALIB_NAV_HINT_DEFAULT;
+  document.getElementById("calibSlotLine").style.display = settingTB ? "none" : "inline";
+  calibNavHintEl.style.display = settingTB ? "none" : "inline";
+  calibSlotLabel.textContent = calibIndex + 1;
+  calibPrompt.textContent = currentPrompt();
+  setActive(settingTB ? -1 : calibIndex);
+  fullyHideLabel();
+}
+
+function enterCalib(mode) {
+  calibMode = mode;
+  calibStage = 0;
+  edgeClicks = {};
+  tbDraft = {};
+  clearGuides();
+  if (mode === "highlight") calibPhase = sharedTB ? "lr" : "tb";
+  if (mode === "rail") { railStatus = null; loadRailSlots(); } // banner fills in on the first poll
+  document.body.classList.add("calibrating");
+  hint.classList.add("show");
+  refreshCalibUI();
+}
+
+function exitCalib() {
+  calibMode = null;
+  refreshRailPanel(); // hide the rail controls before anything else re-reads them
+  clearGuides();
+  document.body.classList.remove("calibrating");
+  hint.classList.remove("show");
+  setActive(-1);
+  fullyHideLabel();
+  refreshTestModeUI();
+  hoveredIndex = -1;
+}
+
+function jumpSlot(delta) {
+  calibIndex = (calibIndex + delta + NUM_SLOTS) % NUM_SLOTS;
+  calibStage = 0;
+  edgeClicks = {};
+  clearGuides();
+  refreshCalibUI();
+}
+
+function redoSharedTB() {
+  if (calibMode !== "highlight") return;
+  calibPhase = "tb";
+  calibStage = 0;
+  tbDraft = {};
+  clearGuides();
+  refreshCalibUI();
+}
+
+function clearExtraBoxes() {
+  extraBoxes = [];
+  saveExtraBoxes();
+  renderExtraBoxes();
+  calibStage = 0;
+  edgeClicks = {};
+  clearGuides();
+  refreshCalibUI();
+}
+
+function undoClick() {
+  if (calibStage === 0) {
+    if (calibMode === "extra" && extraBoxes.length) {
+      extraBoxes.pop();
+      saveExtraBoxes();
+      renderExtraBoxes();
+      refreshCalibUI(); // updates the "BOX N" count in the hint
+    }
+    return;
+  }
+  calibStage -= 1;
+  if (guideEls.length) { guideEls[guideEls.length - 1].remove(); guideEls.pop(); }
+  refreshCalibUI();
+}
+
+stage.addEventListener("click", (e) => {
+  if (!calibMode) return;
+  if (calibMode === "rail") return; // rail teaching is keyboard-only - a stray click must not draw a box
+  const x = e.clientX, y = e.clientY;
+
+  if (calibMode === "label") {
+    if (calibStage === 0) { edgeClicks.left = x; addGuide("v", x); }
+    else if (calibStage === 1) { edgeClicks.right = x; addGuide("v", x); }
+    else if (calibStage === 2) { edgeClicks.top = y; addGuide("h", y); }
+    else if (calibStage === 3) {
+      edgeClicks.bottom = y; addGuide("h", y);
+
+      const left = Math.min(edgeClicks.left, edgeClicks.right);
+      const right = Math.max(edgeClicks.left, edgeClicks.right);
+      const top = Math.min(edgeClicks.top, edgeClicks.bottom);
+      const bottom = Math.max(edgeClicks.top, edgeClicks.bottom);
+
+      labelRect = {
+        x: Math.round(left), y: Math.round(top),
+        w: Math.round(right - left), h: Math.round(bottom - top)
+      };
+      saveLabelRect();
+      showLabel(0);
+      setTimeout(() => exitCalib(), 300);
+      return;
+    }
+    calibStage += 1;
+    refreshCalibUI();
+    return;
+  }
+
+  if (calibMode === "extra") {
+    if (calibStage === 0) { edgeClicks.left = x; addGuide("v", x); }
+    else if (calibStage === 1) { edgeClicks.right = x; addGuide("v", x); }
+    else if (calibStage === 2) { edgeClicks.top = y; addGuide("h", y); }
+    else if (calibStage === 3) {
+      edgeClicks.bottom = y; addGuide("h", y);
+
+      const left = Math.min(edgeClicks.left, edgeClicks.right);
+      const right = Math.max(edgeClicks.left, edgeClicks.right);
+      const top = Math.min(edgeClicks.top, edgeClicks.bottom);
+      const bottom = Math.max(edgeClicks.top, edgeClicks.bottom);
+
+      extraBoxes.push({
+        x: Math.round(left), y: Math.round(top),
+        w: Math.round(right - left), h: Math.round(bottom - top)
+      });
+      saveExtraBoxes();
+      renderExtraBoxes();
+
+      // brief confirmation flash - same treatment as capturing a normal slot - since these
+      // boxes are otherwise invisible until hovered
+      const newEl = extraBoxEls[extraBoxEls.length - 1];
+      newEl.style.outline = "3px solid #0f0";
+      setTimeout(() => { newEl.style.outline = ""; }, 250);
+
+      clearGuides();
+      edgeClicks = {};
+      calibStage = 0; // no auto-exit - stay in the mode so another box can be drawn right away
+      refreshCalibUI();
+      return;
+    }
+    calibStage += 1;
+    refreshCalibUI();
+    return;
+  }
+
+  // "highlight" mode: phase "tb" sets the shared top/bottom once, phase "lr" sets
+  // left/right per slot, reusing sharedTB for the top/bottom of every rectangle.
+  if (calibPhase === "tb") {
+    if (calibStage === 0) {
+      tbDraft.top = y; addGuide("h", y);
+      calibStage = 1;
+      refreshCalibUI();
+    } else {
+      tbDraft.bottom = y; addGuide("h", y);
+      sharedTB = { top: Math.min(tbDraft.top, tbDraft.bottom), bottom: Math.max(tbDraft.top, tbDraft.bottom) };
+      saveSharedTB();
+
+      // re-derive every already-calibrated slot's top/bottom to match the new shared values
+      rects.forEach(r => { r.y = sharedTB.top; r.h = sharedTB.bottom - sharedTB.top; });
+      saveRects();
+      layout();
+
+      calibPhase = "lr";
+      calibStage = 0;
+      clearGuides();
+      refreshCalibUI();
+    }
+    return;
+  }
+
+  // calibPhase === "lr"
+  if (calibStage === 0) {
+    edgeClicks.left = x; addGuide("v", x);
+    calibStage = 1;
+    refreshCalibUI();
+  } else {
+    edgeClicks.right = x; addGuide("v", x);
+    const left = Math.min(edgeClicks.left, edgeClicks.right);
+    const right = Math.max(edgeClicks.left, edgeClicks.right);
+
+    rects[calibIndex] = {
+      x: Math.round(left), y: sharedTB.top,
+      w: Math.round(right - left), h: sharedTB.bottom - sharedTB.top
+    };
+    saveRects();
+    layout();
+
+    const s = slotEls[calibIndex];
+    s.style.outline = "3px solid #0f0";
+    setTimeout(() => { s.style.outline = ""; }, 250);
+    setTimeout(() => jumpSlot(1), 300);
+  }
+});
+
+document.addEventListener("keydown", (e) => {
+  // ---- Esc (or Ctrl+Shift+Space): restart. Checked before EVERYTHING else - before the
+  //      Space->Enter alias and before the case-is-out swallow - because its entire job is to
+  //      work from states that are busy eating keystrokes. In a calibration mode Esc just
+  //      leaves the calibration instead. The search box handles its own Esc (close search)
+  //      and stops it reaching this handler. ----
+  if (e.key === "Escape" || ((e.code === "Space" || e.key === " ") && e.ctrlKey && e.shiftKey)) {
+    e.preventDefault();
+    if (calibMode && e.key === "Escape") exitCalib(); else restartShelf();
+    return;
+  }
+
+  if (document.activeElement === searchInputEl) return; // let typing go to the search box, not shortcuts
+
+  // ---- D: the outro dance, on/off. Checked before the case-is-out swallow so it also stops a
+  //      dance from any state; it will not START while a case is out (see startDance). ----
+  if ((e.key === "d" || e.key === "D") && !calibMode && !e.ctrlKey && !e.altKey && !e.metaKey) {
+    e.preventDefault();
+    toggleDance();
+    return;
+  }
+
+  // ---- Space is a full alias for Enter. Touchmote sends keystrokes for remote buttons, and its
+  //      A button is bound to left-click - which can't select what the D-pad is focused on, because
+  //      a click acts on the mouse cursor and the cursor doesn't move with the D-pad. Binding a
+  //      remote button to Space gives the pad its own select/eject that follows the highlight.
+  //
+  //      Aliased once here rather than at each `Enter` call site so the two can never drift apart.
+  //      preventDefault is required: Space scrolls the page under the projector overlay, and it
+  //      re-activates whichever settings-menu button was last clicked and still holds DOM focus. ----
+  const key = (e.key === " " || e.code === "Space") ? "Enter" : e.key;
+  if (key !== e.key) e.preventDefault();
+
+  // A case is out: the next key press of any kind puts it back, and is otherwise swallowed -
+  // no hotkey fires while there is an arm in the shelf. Bare modifiers don't count as input.
+  if (gameIsOut()) {
+    if (!["Shift", "Control", "Alt", "Meta"].includes(e.key)) {
+      e.preventDefault();
+      // Same debounce as the click: Space arriving right behind the click that pushed the case
+      // out is the same A press, not a request to put it back.
+      if (acceptSelectInput()) retractGame();
+    }
+    return;
+  }
+
+  const k = key.toLowerCase();
+
+  // ---- arrow keys: the keyboard twin of the D-pad. Same pickSlotInDirection snapping, same
+  //      one-slot-per-press pacing, and the same railGoto that walks the carriage along with
+  //      the highlight - so the mouse, the pad and the keyboard all drive the rail identically.
+  //      In rail calibration the horizontal arrows jog the motor instead. ----
+  const nav = ARROW_DIRECTIONS[key];
+  if (nav) {
+    e.preventDefault(); // stop the page scrolling under the projector overlay
+    if (calibMode === "rail") {
+      if (nav[0] !== 0) railCalibJog(nav[0] * railJogStep * (e.shiftKey ? RAIL_JOG_SHIFT_FACTOR : 1));
+      return;
+    }
+    if (calibMode) return;
+    if (gamepadInputBlocked()) return;
+    moveGamepadFocus(nav[0], nav[1]);
+    return;
+  }
+
+  // Rail calibration owns the whole keyboard while it's open, so A and B can mean "assign this
+  // slot to that arm" without colliding with the B/C/E calibration-mode switches. R still
+  // exits, F still goes fullscreen; everything else is swallowed.
+  if (calibMode === "rail") {
+    if (k === "r") { exitCalib(); return; }
+    if (k === "f") { document.documentElement.requestFullscreen?.(); return; }
+    if (key === "[") { railCalibJumpSlot(-1); return; }
+    if (key === "]") { railCalibJumpSlot(1); return; }
+    if (key === "Enter") { railCalibSave(); return; }
+    if (key === "Backspace") { railCalibClear(); return; }
+    if (k === "a") { railSetPusher("a"); return; }
+    if (k === "b") { railSetPusher("b"); return; }
+    if (k === "p") { railPush(); return; }   // does this arm actually reach the case?
+    if (k === "0") { homeRail(); return; }
+    if (k === "-") { setRailJogStep(Math.max(1, Math.round(railJogStep / 2))); refreshCalibUI(); return; }
+    if (k === "+" || k === "=") { setRailJogStep(railJogStep * 2); refreshCalibUI(); return; }
+    return;
+  }
+
+  if (key === "Enter") {
+    if (gamepadInputBlocked()) return;
+    // Enter/Space selects what is highlighted: the D-pad's game if the pad owns the highlight,
+    // otherwise whatever the pointer is on. That second case matters for the remote, whose A
+    // button sends a click AND a Space - whichever of the two arrives first has to select the
+    // pointed-at game, because the debounce then discards the other. When Space only knew
+    // about the pad focus, a Space that won the race selected nothing and its click was thrown
+    // away as a duplicate, so A appeared dead.
+    const target = (padMode && gamepadFocusIndex !== -1) ? gamepadFocusIndex : hoveredIndex;
+    if (target < 0) return; // nothing highlighted: leave the debounce alone for the click
+    if (!acceptSelectInput()) return; // the other half of an A press already handled as a click
+    selectSlot(target);
+    return;
+  }
+
+  if (k === "r") { enterCalib("rail"); return; }
+  if (k === "c") { (calibMode === "highlight") ? exitCalib() : enterCalib("highlight"); return; }
+  if (k === "b") { (calibMode === "label") ? exitCalib() : enterCalib("label"); return; }
+  if (k === "k") { if (calibMode) return; toggleClassicMode(); return; }
+  if (k === "e") { (calibMode === "extra") ? exitCalib() : enterCalib("extra"); return; }
+  if (k === "f") { document.documentElement.requestFullscreen?.(); return; }
+  if (k === "m") { if (calibMode) return; toggleSettingsMenu(); return; }
+  if (k === "t") {
+    if (calibMode === "highlight") { redoSharedTB(); return; }
+    if (!calibMode) { toggleTestMode(); return; }
+    return; // no meaning in label/extra calibration
+  }
+  if (!calibMode) return;
+
+  if (key === "[") { if (calibMode === "highlight" && calibPhase === "lr") jumpSlot(-1); return; }
+  if (key === "]") { if (calibMode === "highlight" && calibPhase === "lr") jumpSlot(1); return; }
+  if (key === "Backspace") { undoClick(); return; }
+  if (k === "x" && calibMode === "extra") { clearExtraBoxes(); return; }
+});
+</script>
+</body>
+</html>
