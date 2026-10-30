@@ -1,12 +1,6 @@
 # IRL Home Screen
 
-A shelf of game cases that picks a game for you.
-
-A projector shines down onto a real shelf of game cases and draws a glowing highlight on
-whichever case you point at. Click it, and a carriage on a rail behind the shelf drives to that
-case and a small servo arm pushes it forward so you can grab it. The projected name tag shows the
-game's logo, a few stats and a short description while it is out. Pull the lever at the end of
-the shelf and a roulette of lights spins across the cases and picks one at random.
+YouTube video link coming.
 
 By **AlmostInventor**.
 
@@ -20,20 +14,6 @@ By **AlmostInventor**.
 > so check everything yourself, follow the instructions that come with your power supplies and
 > components, and ask someone qualified if you are unsure. I take no responsibility for damage
 > or injury resulting from building or using it.
-
-## Features
-
-- **Point and pick:** any mouse, or a motion remote used as a pointer, highlights the case it is
-  over, and a click pushes that case out.
-- **Physical push-out:** one carriage on a rail, two servo pusher arms (one per side of the
-  carriage), positions taught slot by slot.
-- **Roulette lever:** a real lever on the shelf starts a spin. Four lights race around the
-  shelf, drop out one by one, and the last one lands on a random game.
-- **Info card** in the name-tag area while a case is out: logo, star rating, hours played, max
-  players and a one-line description (all editable).
-- **Calibration built in:** you click the edges of each case on the wall, and everything is saved.
-- **Extras:** an outro light show, a classic gold-glow look, synthesized sound effects, a
-  one-key reset, and a web dashboard on the controller for setting up the rail.
 
 ## How it works
 
